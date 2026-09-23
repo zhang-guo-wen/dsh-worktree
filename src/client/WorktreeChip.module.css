@@ -1,0 +1,120 @@
+/* Worktree control. One bordered pill holds the branch segment and the worktree
+   segment, divided by a hairline; geometry follows the neighbouring hero chips
+   so the group reads as the same kind of control. The composer dock renders
+   below the hero control row, so this wrapper lifts the pill onto that row. */
+
+.row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 16px;
+}
+
+/* The hero's control row — the workspace picker and the agent-preset chip —
+   declares no seat of its own: both of its slots are single-occupant, so this
+   dock row is the next line below it. In the hero phase the row therefore takes
+   no height and cancels the stack gaps it would otherwise add, and the pill is
+   lifted onto the control row's line, right-aligned inside that row's own
+   horizontal padding. Anywhere else the control keeps a line of its own, which
+   is where a staged choice above the queue and todo docks belongs. */
+:global([data-phase='hero']) .row,
+:global([data-content-phase='hero']) .row {
+  position: relative;
+  height: 0;
+  /* The hero stack's 8px gap on each side: a zero-height row must move neither
+     the control row above it nor the composer card below it. */
+  margin: -8px 0;
+}
+
+.pill {
+  display: inline-flex;
+  /* Stretch, not center: each segment then fills the pill's height, so a hover
+     fill covers its whole half. The segments center their own contents. */
+  align-items: stretch;
+  height: 28px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  overflow: hidden;
+}
+
+:global([data-phase='hero']) .pill,
+:global([data-content-phase='hero']) .pill {
+  position: absolute;
+  right: 16px;
+  /* 100% of a zero-height containing block: the pill's bottom edge lands on the
+     control row's baseline and its height grows upward over that row. */
+  bottom: 100%;
+  max-width: min(calc(100% - 32px), 560px);
+}
+
+/* Branch segment: the menu trigger holding the base a new branch starts from. */
+.branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+  min-width: 0;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.branch:not(:disabled):hover,
+.branch[aria-expanded='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.branch:disabled {
+  cursor: default;
+  color: var(--dsw-alias-label-quaternary);
+}
+
+.branchIcon {
+  flex: none;
+}
+
+.branchLabel {
+  min-width: 0;
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.divider {
+  flex: none;
+  width: 1px;
+  align-self: stretch;
+  background: var(--dsw-alias-border-l2);
+}
+
+/* Worktree segment: the checkbox owns its label, so only placement is set here. */
+.seat {
+  height: 100%;
+  padding: 0 8px;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.seat:has(input:disabled) {
+  cursor: default;
+}
+
+.seatIconError {
+  flex: none;
+  margin-right: 6px;
+  color: var(--dsw-alias-label-danger, #d33);
+}

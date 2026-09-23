@@ -1,0 +1,28 @@
+{
+  // Source-level typecheck for this standalone plugin. It extends the Harness
+  // checkout's base config so every `@deepseek-ai/*` import resolves through
+  // the checkout's own `paths` map to that package's SOURCE, which is the only
+  // way one program can see a mutually consistent set: the installed copies
+  // under a profile are spread across several release lines, and mixing them
+  // produces slot and service merges that no single deployment ever has.
+  //
+  // Run from the Harness checkout root:
+  //   node_modules/.bin/tsc --noEmit -p dsh-worktree/tsconfig.harness.json
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "noEmit": true,
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "types": ["node", "react"]
+  },
+  "include": ["src"]
+}
