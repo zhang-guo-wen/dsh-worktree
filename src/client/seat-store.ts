@@ -10,7 +10,7 @@
  * The store owns no session: starting one calls the Host route, which creates
  * the checkout, registers its project, and starts the session in it as one
  * operation.
- * @module @zhang-guo-wen/dsh-worktree/client/seat-store
+ * @module @guowenzhang/dsh-worktree/client/seat-store
  */
 
 import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'

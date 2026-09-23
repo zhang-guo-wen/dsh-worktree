@@ -6,7 +6,7 @@
  * new-session flow) creates a checkout through it and starts a session whose
  * `meta.cwd` is the returned path, which is what makes the checkout a separate
  * project with its own file sandbox and shell working directory.
- * @module @zhang-guo-wen/dsh-worktree
+ * @module @guowenzhang/dsh-worktree
  */
 
 import type { Context } from '@deepseek-ai/cordis'

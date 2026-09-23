@@ -1,4 +1,4 @@
-# @zhang-guo-wen/dsh-worktree
+# @guowenzhang/dsh-worktree
 
 在独立的 Git worktree 里开一个 DSH 会话：创建 checkout、把它注册成一个独立工作区、并让会话以它为工作目录启动。
 
@@ -30,7 +30,7 @@ dsh plugin --profile web add C:/path/to/dsh-worktree
 ```yaml
 - insert:
     - id: worktree
-      name: '@zhang-guo-wen/dsh-worktree'
+      name: '@guowenzhang/dsh-worktree'
 ```
 
 host 半边是进程内模块，**改完要重启宿主**；浏览器半边刷新页面即可。
@@ -121,7 +121,7 @@ Workspace 的身份判据是 **`fs.realpath` 之后的路径字符串相等**（
 
 ```yaml
 - id: worktree
-  name: '@zhang-guo-wen/dsh-worktree'
+  name: '@guowenzhang/dsh-worktree'
   config:
     defaultPath: agents            # agents（默认，工作区目录下的 .agents/worktree/）| sibling（仓库旁边）
     agentsDirectory: .agents/worktree  # defaultPath: agents 时的目录，相对工作区；缺的层级会自动创建

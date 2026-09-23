@@ -6,7 +6,7 @@
  * turned into a failure. Callers pass already-validated absolute paths and
  * already-validated branch names; this module adds no policy of its own beyond
  * never invoking a shell.
- * @module @zhang-guo-wen/dsh-worktree/git
+ * @module @guowenzhang/dsh-worktree/git
  */
 
 import { execFile } from 'node:child_process'

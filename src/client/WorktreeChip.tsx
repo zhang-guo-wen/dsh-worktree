@@ -12,7 +12,7 @@
  * The worktree half is one-way: checking it creates the checkout and starts the
  * session inside it, and nothing checks it back off. A failed start leaves it
  * unchecked with its reason, and the next check retries.
- * @module @zhang-guo-wen/dsh-worktree/client/WorktreeChip
+ * @module @guowenzhang/dsh-worktree/client/WorktreeChip
  */
 
 import { useEffect, useState } from 'react'

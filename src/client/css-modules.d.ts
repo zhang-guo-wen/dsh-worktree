@@ -1,6 +1,6 @@
 /**
  * Ambient declarations for the browser build of this package.
- * @module @zhang-guo-wen/dsh-worktree/client/env
+ * @module @guowenzhang/dsh-worktree/client/env
  */
 
 /** CSS Modules: the bundler replaces this with the compiled class map. */

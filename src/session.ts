@@ -11,7 +11,7 @@
  * The two dependencies are optional services read with `ctx.get`: a deployment
  * that composes no default model or no presets still gets a Session, composed
  * as plainly as that deployment allows.
- * @module @zhang-guo-wen/dsh-worktree/session
+ * @module @guowenzhang/dsh-worktree/session
  */
 
 import type { Context } from '@deepseek-ai/cordis'

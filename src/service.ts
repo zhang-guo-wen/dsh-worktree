@@ -9,7 +9,7 @@
  * are separate consumers of the path this returns, and keeping them out
  * preserves the rule that a capability seam is complete without prescribing
  * its consumers.
- * @module @zhang-guo-wen/dsh-worktree/service
+ * @module @guowenzhang/dsh-worktree/service
  */
 
 import { mkdir, realpath, stat } from 'node:fs/promises'

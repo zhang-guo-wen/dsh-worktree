@@ -9,7 +9,7 @@
  * consumers that act on live checkouts. The branch listing is what the browser
  * half offers as the base of a new branch, so it is parsed here too rather than
  * re-split at each caller.
- * @module @zhang-guo-wen/dsh-worktree/porcelain
+ * @module @guowenzhang/dsh-worktree/porcelain
  */
 
 /** One parsed `git worktree list --porcelain` record. */

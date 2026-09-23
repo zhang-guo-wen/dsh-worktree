@@ -1,5 +1,5 @@
 {
-  "name": "@zhang-guo-wen/dsh-worktree",
+  "name": "@guowenzhang/dsh-worktree",
   "description": "Git worktree isolation for DeepSeek Harness: create a worktree, register it as its own project, and start the session inside it",
   "version": "0.1.0",
   "type": "module",

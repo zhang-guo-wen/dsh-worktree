@@ -12,7 +12,7 @@
  * only when its header cwd canonicalizes to that workspace's path, and a
  * mismatch fails loud, so the checkout must exist before the workspace record
  * and the workspace record before the session.
- * @module @zhang-guo-wen/dsh-worktree/route
+ * @module @guowenzhang/dsh-worktree/route
  */
 
 import type { Context } from '@deepseek-ai/cordis'

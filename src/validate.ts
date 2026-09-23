@@ -5,7 +5,7 @@
  * boundary: each is checked here before any git invocation, and a value that
  * cannot be a branch name or a checkout directory fails with the reason rather
  * than reaching Git and producing its own opaque message.
- * @module @zhang-guo-wen/dsh-worktree/validate
+ * @module @guowenzhang/dsh-worktree/validate
  */
 
 import { randomInt } from 'node:crypto'

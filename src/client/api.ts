@@ -5,7 +5,7 @@
  * Remote exposes: create a checkout, register its project, and start a session
  * in it. Everything else (listing workspaces, opening a session) goes through
  * the composed client services.
- * @module @zhang-guo-wen/dsh-worktree/client/api
+ * @module @guowenzhang/dsh-worktree/client/api
  */
 
 /** The route prefix both halves agree on. */

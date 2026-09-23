@@ -1,6 +1,6 @@
 /**
  * Copy for the worktree surfaces, in the shapes its surfaces render.
- * @module @zhang-guo-wen/dsh-worktree/client/locales
+ * @module @guowenzhang/dsh-worktree/client/locales
  */
 
 /** Dictionary namespace for this plugin's UI copy. */

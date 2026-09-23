@@ -4,7 +4,7 @@
  * Declaring the service name on `Context` is what lets a Host consumer write
  * `ctx.worktree` under cordis's injection guard instead of reaching through
  * `ctx.get('worktree')` and narrowing an `undefined` at each call site.
- * @module @zhang-guo-wen/dsh-worktree/types
+ * @module @guowenzhang/dsh-worktree/types
  */
 
 import type { WorktreeService } from './service.ts'

@@ -11,7 +11,7 @@
  * before the first turn, and afterwards the way to change it is a new session.
  * Registration follows the composed conversation scope, which is how the chip
  * reaches the Session it belongs to.
- * @module @zhang-guo-wen/dsh-worktree/client
+ * @module @guowenzhang/dsh-worktree/client
  */
 
 import type { Context } from '@deepseek-ai/cordis'

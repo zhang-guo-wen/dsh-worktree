@@ -6,7 +6,7 @@
  * one. `git worktree add` must run against the common repository, never against
  * a linked checkout, which is why this module exists as its own step rather
  * than being folded into the command that follows it.
- * @module @zhang-guo-wen/dsh-worktree/repository
+ * @module @guowenzhang/dsh-worktree/repository
  */
 
 import { readFile, stat } from 'node:fs/promises'

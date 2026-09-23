@@ -6,7 +6,7 @@
  * starts a session — the model creates a worktree here and the product's own
  * new-session flow (or the session-create path) puts a session inside it. That
  * split is what keeps this plugin from owning session lifecycle.
- * @module @zhang-guo-wen/dsh-worktree/tools
+ * @module @guowenzhang/dsh-worktree/tools
  */
 
 import type { Context } from '@deepseek-ai/cordis'

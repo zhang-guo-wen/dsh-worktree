@@ -5,7 +5,7 @@
  * names: a picker that accepted what the Host rejects would fail after the user
  * committed to it, and a Host that accepted what Git rejects would fail mid
  * `git worktree add`. This module is that single rule.
- * @module @zhang-guo-wen/dsh-worktree/branch-rule
+ * @module @guowenzhang/dsh-worktree/branch-rule
  */
 
 /** Characters and sequences `git check-ref-format --branch` rejects. */
