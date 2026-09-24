@@ -3,9 +3,11 @@
  *
  * One pill holds both facts the choice is made of: the local branch a new
  * branch starts from, and whether the session moves into a new checkout at all.
- * It sits beside the workspace picker and the agent-preset chip and mirrors
- * their geometry, because it is the same kind of choice: what the session will
- * BE. A session's working directory is fixed at creation, so this control is
+ * It sits beside the workspace picker and the agent-preset chip and follows
+ * their geometry — the same ghost row, the same rounded ends — drawn one step
+ * smaller and clear of the composer card's corner.
+ *
+ * A session's working directory is fixed at creation, so this control is
  * available only while the session is blank and the choice cannot be revised
  * afterwards — starting a new session is the way to change it.
  *
@@ -19,7 +21,8 @@ import { useEffect, useState } from 'react'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
-  Checkbox, IconBranchOutlineRegular, IconChevronDownOutlineRegular, IconWarningOutlineRegular, Menu,
+  IconBranchOutlineRegular, IconChevronDownOutlineRegular, IconProjectAddOutlineRegular,
+  IconWarningOutlineRegular, Menu,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 // Type-only: pulls the ui-conversation SlotMap merge (the hero controls).
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -115,24 +118,32 @@ export function WorktreeChip({
                 setOpen(value => !value)
               }}
             >
-              <IconBranchOutlineRegular className={css.branchIcon} />
+              <IconBranchOutlineRegular className={css.branchIcon} size={14} />
               <span className={css.branchLabel}>{baseLabel}</span>
-              {!locked && <IconChevronDownOutlineRegular className={css.chevron} />}
+              {!locked && <IconChevronDownOutlineRegular className={css.chevron} size={12} />}
             </button>
           )}
         />
         <span className={css.divider} aria-hidden="true" />
-        <Checkbox
-          checked={state.enabled || locked}
-          disabled={busy || locked}
-          label={busy ? t('seat.creating') : t('seat.label')}
-          title={locked ? lockedHint : state.error ?? t('seat.hint')}
-          // One-way: the choice is spent by the start it triggers, so there is
-          // no check that turns it back off.
-          onChange={() => { setEnabled(true) }}
-          className={css.seat}
-        />
-        {state.error !== null && !locked && <IconWarningOutlineRegular className={css.seatIconError} />}
+        <label className={css.seat} title={locked ? lockedHint : state.error ?? t('seat.hint')}>
+          <input
+            type="checkbox"
+            checked={state.enabled || locked}
+            disabled={busy || locked}
+            // One-way: the choice is spent by the start it triggers, so there is
+            // no check that turns it back off.
+            onChange={() => { setEnabled(true) }}
+          />
+          {/* The glyph travels with the label text: the checkout this segment
+              stages is registered as a workspace of its own, so it wears the
+              product's own add-workspace mark. Decorative — the text beside it
+              is the checkbox's accessible name. */}
+          <span className={css.seatGlyph} aria-hidden="true">
+            <IconProjectAddOutlineRegular size={14} />
+          </span>
+          <span>{busy ? t('seat.creating') : t('seat.label')}</span>
+        </label>
+        {state.error !== null && !locked && <IconWarningOutlineRegular className={css.seatIconError} size={14} />}
       </div>
     </div>
   )

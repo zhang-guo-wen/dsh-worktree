@@ -37,7 +37,7 @@ host 半边是进程内模块，**改完要重启宿主**；浏览器半边刷�
 
 ### 2. 从界面用
 
-在 Git 仓库里开**新会话**时，`选择工作区 / 模式` 那一行的右端出现一个胶囊：`⑂ <分支> ▾ │ ☑ worktree`。左边是**本地分支下拉**（新分支从哪个本地分支开始，默认是当前会话所在 checkout 的分支，取不到就是 `HEAD`；列表在打开菜单时才去读，按最近提交排序，只列 `refs/heads`——远端分支或 tag 会让 `git worktree add` 悄悄进 detached HEAD，所以不给选），右边勾上即创建独立 worktree 并立即在里面开启会话：
+在 Git 仓库里开**新会话**时，`选择工作区 / 模式` 那一行的右端出现一个胶囊：`⑂ <分支> ▾ │ ☐ <新建工作区图标> worktree`。左边是**本地分支下拉**（新分支从哪个本地分支开始，默认是当前会话所在 checkout 的分支，取不到就是 `HEAD`；列表在打开菜单时才去读，按最近提交排序，只列 `refs/heads`——远端分支或 tag 会让 `git worktree add` 悄悄进 detached HEAD，所以不给选），右边勾上即创建独立 worktree 并立即在里面开启会话：
 
 1. 在**主仓库**上执行 `git worktree add -b <branch> <path> <base>`（会话即使已经在某个 linked worktree 里，也会回溯到主仓库）。分支名由 Host 自动生成：**所选 base 分支名（`/` 换成 `-`）+ 6 位随机数字**，例如 `dev-482913`；base 不是本地分支（`HEAD`、某个 SHA、`origin/x`）时用 `worktree-<6 位随机数字>`。界面不需要输入分支名。默认路径是**当前工作区目录下的 `.agents/worktree/<分支名>`**，缺的每一级都会自动创建——这样它在工作区树里挂在当前工作区下面，而不是变成旁边一个平级目录；旧行为（仓库旁边 `<repo>-wt-<branch>`）用 `defaultPath: sibling` 保留；
 2. 把新目录注册成一个工作区，标题形如 `repo · dev-482913`；
@@ -114,7 +114,7 @@ Workspace 的身份判据是 **`fs.realpath` 之后的路径字符串相等**（
 - **分支名默认值**是 `<base>-<6 位随机数字>`（没有可记录的 base 时 `worktree-<6 位随机数字>`），不跟随首条消息；随机后缀只有 6 位数字，同一 base 撞名（约百万分之一）时 `git worktree add` 会直接报错，再点一次即可。**base 分支本身不落盘**，但它就在分支名里，所以工作区标题、checkout 目录、`git branch` 都看得见。
 - **默认 checkout 在工作区内的 `.agents/worktree/` 下**，所以它出现在主 checkout 的 `git status` 里（未跟踪目录）。要清静就把 `.agents/worktree/` 加进 `.gitignore` / `.git/info/exclude`，或改用 `defaultPath: sibling`。
 - **不能给分支起名**：分支在工作区标题里可见，但界面不提供输入。需要指定分支用 `worktree_create`。
-- **胶囊与 `选择工作区 / 模式` 同一行是靠 CSS 对齐的**：hero 那一行的两个槽（`conversation.hero.workspace`、`conversation.hero.agentPreset`）都是 single 槽，第三方插件没有可注册的座位。控件实际注册在 `conversation.input.dock`（order -10，排在最前），在 `data-phase='hero'` 时把这一行压成 0 高度、抵消 `.composerHero` 的 8px 行距，再用 `bottom: 100%` 贴到上一行右端。因此：非 hero 阶段它仍退回自己的一行（此时本来也不渲染），hero 行距若被上游改动，对齐会差一点；若别的插件往这个 dock 里注册了 order < -10 的条目，控件会贴到那条的上面。
+- **胶囊与 `选择工作区 / 模式` 同一行是靠 CSS 对齐的**：hero 那一行的两个槽（`conversation.hero.workspace`、`conversation.hero.agentPreset`）都是 single 槽，第三方插件没有可注册的座位。控件实际注册在 `conversation.input.dock`（order -10，排在最前），在 `data-phase='hero'` 时把这一行压成 0 高度、抵消 `.composerHero` 的 8px 行距，再用 `bottom: calc(100% + 4px)` 悬在输入卡片上方 4px 处、`right: 28px` 收在卡片右边缘内 12px——下边距取 4px，右边距取 12px 是因为卡片右上角是 22px 圆角，靠太近会像压在弧线上；12px 也正好是左侧 workspace 胶囊图标距卡片左边缘的距离。胶囊自身 24px 高、13px 字，和旁边 28px 的 ghost 胶囊同一种语言（无边框、无底色，靠 hover 填充和两段之间 12px 高的细分隔线成形），整体矮一档；`worktree` 一段是 `☐ <新建工作区图标> worktree`：图标跟在勾选框之后、紧贴文字，用的是 `IconProjectAddOutlineRegular`——侧边栏「添加工作区」那个图标，因为这个 check 的结果正是"这个 checkout 变成一个新工作区"；勾选框、图标、文字同在一个 label 里，点哪里都是勾选。两段的字都是 13px/500，和左侧 ghost 胶囊一致。两者顶边对齐。因此：非 hero 阶段它仍退回自己的一行（此时本来也不渲染），hero 行距若被上游改动，对齐会差一点；若别的插件往这个 dock 里注册了 order < -10 的条目，控件会贴到那条的上面。
 - **"开关只在首条消息时才创建"做不到**：客户端 composer 的提交是 ui-conversation 内部的输入状态机，槽位里没有"提交前"钩子（`conversation.composer` 是 chain，选中者只能自己重写整个 composer；`conversation.composer.bar` 是 single，注册进去会把输入框顶掉），Host 侧也只有 `session/prompt` 这个 RPC；而 `SessionHeader.cwd` 又是创建时冻结的不可变字段。所以"先开关、首条消息再建"需要给 harness 加一个提交前扩展点，插件自身无法实现。当前行为是**点击即创建并切过去**。
 
 ## 配置
