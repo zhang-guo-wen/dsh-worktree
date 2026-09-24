@@ -49,11 +49,18 @@ async function provideSibling(ctx: Context, services: Record<string, unknown>): 
 }
 
 /**
+ * The configuration a deployment writes: only the fields it sets. The mounting
+ * fiber validates this against the plugin's schema and fills every default,
+ * which is how a deployment's configuration is actually produced.
+ */
+type PluginConfigInput = Parameters<typeof plugin.Config>[0]
+
+/**
  * Mount the plugin on a context exposing the services it consumes.
- * @param config - plugin configuration.
+ * @param config - the fields this spec sets; the schema supplies the rest.
  * @returns the registered tool names and route paths.
  */
-async function mount(config: Partial<plugin.Config> = {}): Promise<{ tools: string[]; routes: string[] }> {
+async function mount(config: PluginConfigInput = {}): Promise<{ tools: string[]; routes: string[] }> {
   const tools: string[] = []
   const routes: string[] = []
   const ctx = new Context()
@@ -63,7 +70,7 @@ async function mount(config: Partial<plugin.Config> = {}): Promise<{ tools: stri
     workspaceRegistry: {},
     agents: {},
   })
-  await ctx.plugin(plugin, config as plugin.Config).await()
+  await ctx.plugin(plugin, config).await()
   return { tools, routes }
 }
 
@@ -72,7 +79,7 @@ describe('dsh-worktree plugin entry', () => {
     const tools: string[] = []
     const ctx = new Context()
     await provideSibling(ctx, { tools: toolRegistry(tools) })
-    await ctx.plugin(plugin, { startSessionRoute: false } as plugin.Config).await()
+    await ctx.plugin(plugin, { startSessionRoute: false }).await()
     expect(ctx.get('worktree')).toBeDefined()
   })
 
@@ -103,7 +110,7 @@ describe('dsh-worktree plugin entry', () => {
       workspaceRegistry: {},
       agents: {},
     })
-    const fiber = await ctx.plugin(plugin, {} as plugin.Config).await()
+    const fiber = await ctx.plugin(plugin, {}).await()
     expect(tools).toHaveLength(3)
     expect(routes).toHaveLength(1)
     await fiber.dispose()
@@ -117,7 +124,7 @@ describe('dsh-worktree plugin entry', () => {
     const ctx = new Context()
     await provideSibling(ctx, { tools: toolRegistry(tools) })
     // No webServer: the host tools must still mount.
-    await expect(ctx.plugin(plugin, {} as plugin.Config).await()).resolves.toBeDefined()
+    await expect(ctx.plugin(plugin, {}).await()).resolves.toBeDefined()
     expect(tools).toHaveLength(3)
   })
 
@@ -127,7 +134,7 @@ describe('dsh-worktree plugin entry', () => {
     await provideSibling(ctx, { tools: toolRegistry([]), webServer: webServer(routes) })
     // workspaceRegistry and agents are absent: the route reads both, so it must
     // wait rather than mount and fail on the first request that needs them.
-    await ctx.plugin(plugin, {} as plugin.Config).await()
+    await ctx.plugin(plugin, {}).await()
     expect(routes).toEqual([])
   })
 
@@ -136,7 +143,28 @@ describe('dsh-worktree plugin entry', () => {
     await provideSibling(ctx, { tools: toolRegistry([]) })
     // The checkout path is derived per creation, so a directory naming a parent
     // would put checkouts outside every workspace; it fails at load instead.
-    await expect(ctx.plugin(plugin, { agentsDirectory: '../escape' } as plugin.Config).await())
+    await expect(ctx.plugin(plugin, { agentsDirectory: '../escape' }).await())
       .rejects.toThrow(/agentsDirectory/)
+  })
+
+  it('re-installs the live policy when the settings document moves', async () => {
+    const ctx = new Context()
+    await provideSibling(ctx, { tools: toolRegistry([]), settings: {} })
+    await ctx.plugin(plugin, { nestedRepositories: 'all', nestedScanDepth: 5 }).await()
+    const service = ctx.get('worktree')
+    if (service === undefined) throw new Error('the plugin provided no worktree service')
+    const reconfigure = vi.spyOn(service, 'reconfigure')
+    // Another entry's update must not touch this one; this entry's must carry
+    // every live field, resolved the same way the loader resolved them.
+    ctx.emit('settings/document-updated', 'llm-deepseek', 1)
+    expect(reconfigure).not.toHaveBeenCalled()
+    ctx.emit('settings/document-updated', plugin.SETTINGS_NAMESPACE, 2)
+    expect(reconfigure).toHaveBeenCalledWith({
+      timeoutMs: 60_000,
+      defaultPath: 'agents',
+      agentsDirectory: '.agents/worktree',
+      nestedRepositories: 'all',
+      nestedScanDepth: 5,
+    })
   })
 })

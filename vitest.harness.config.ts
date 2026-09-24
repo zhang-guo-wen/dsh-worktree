@@ -40,6 +40,9 @@ export default {
     alias: [
       { find: /^react$/, replacement: `${react}/index.js` },
       { find: /^react\/jsx-runtime$/, replacement: `${react}/jsx-runtime.js` },
+      // A spec that mounts the browser half compiles its components, which the
+      // development JSX transform imports from here.
+      { find: /^react\/jsx-dev-runtime$/, replacement: `${react}/jsx-dev-runtime.js` },
       // `dsh-client-store` re-exports from zustand, and the browser resolves
       // that through the module table; a Node spec resolves it here instead.
       { find: /^zustand$/, replacement: `${zustand}/index.js` },
@@ -49,6 +52,10 @@ export default {
     include: ['tests/**/*.spec.{ts,tsx}'],
     environment: 'node',
     pool: 'forks',
+    // These specs drive real git over scratch repositories and files run in
+    // parallel, so a submodule clone that takes a second on an idle host can
+    // take several beside ten other forks — the default bound is not a signal.
+    testTimeout: 30_000,
     execArgv: vitestExecArgv,
   },
 }

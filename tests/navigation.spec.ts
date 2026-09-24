@@ -13,6 +13,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as plugin from '../src/client/index.ts'
 import type { WorktreeChipInjected } from '../src/client/WorktreeChip.tsx'
+import { configFormsDouble } from './config-forms-double.ts'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -114,6 +115,9 @@ async function mount(options: {
   ctx.provide('slots', {} as never)
   ctx.provide('conversation', {} as never)
   ctx.provide('uiWorkspace', {} as never)
+  // The settings page is part of the browser half; its form service must be
+  // present for the plugin to apply, even though this case drives the chip.
+  ctx.provide('configForms', configFormsDouble().service as never)
   ctx.inject = ((_deps: unknown, cb: (scope: unknown) => unknown) => {
     cb(scope)
     return undefined

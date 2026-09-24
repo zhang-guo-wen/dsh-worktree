@@ -11,6 +11,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it } from 'vitest'
 import * as plugin from '../src/client/index.ts'
+import { configFormsDouble } from './config-forms-double.ts'
 
 /** One recorded slot registration. */
 interface Recorded {
@@ -50,6 +51,9 @@ async function mount(): Promise<{ recorded: Recorded[]; injected: boolean; dispo
   ctx.provide('slots', slotEntry as never)
   ctx.provide('conversation', {} as never)
   ctx.provide('uiWorkspace', {} as never)
+  // Not served: this case asserts the chip's registration, so the settings page
+  // stays unregistered while the double reports no entry.
+  ctx.provide('configForms', configFormsDouble().service as never)
   // `ctx.inject(deps, cb)` only runs cb once every dep resolves; providing all
   // four makes the callback run against the recorded scope instead.
   const originalInject = ctx.inject.bind(ctx)

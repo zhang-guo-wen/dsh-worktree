@@ -107,6 +107,19 @@ describe('WorktreeService against real git', () => {
       .toThrow(/refusing to remove the main worktree/)
   })
 
+  it('creates a checkout under the user directory when that layout is chosen', async () => {
+    const { root, scratch } = repository()
+    const home = join(scratch, 'home-agents')
+    const service = new WorktreeService({ defaultPath: 'home', homeAgentsDirectory: home })
+    const createdWorktree = await service.create({ cwd: root, branch: 'away' })
+
+    // The branch names the directory, and the directory is the user's own, not
+    // the workspace's: that is the whole point of this layout.
+    expect(createdWorktree.path).toBe(join(home, 'worktree', 'away'))
+    expect(existsSync(join(createdWorktree.path, 'tracked.txt'))).toBe(true)
+    expect(createdWorktree.path.startsWith(root)).toBe(false)
+  })
+
   it('refuses a path the repository does not list', async () => {
     const { root, scratch } = repository()
     const service = new WorktreeService()

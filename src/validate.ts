@@ -11,6 +11,9 @@
 import { randomInt } from 'node:crypto'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { branchIsValid } from './branch-rule.ts'
+import type { WorktreeLayout } from './policy.ts'
+
+export type { WorktreeLayout } from './policy.ts'
 
 /**
  * Assert a value is usable as a new branch name.
@@ -42,9 +45,6 @@ export function assertAbsolutePath(path: string, label: string): void {
     throw new Error(`${label} must not contain a ".." segment: ${JSON.stringify(path)}`)
   }
 }
-
-/** Where a checkout created without an explicit path goes. */
-export type WorktreeLayout = 'agents' | 'sibling'
 
 /**
  * Assert a value is usable as the relative directory the `agents` layout
@@ -86,6 +86,21 @@ export function agentsWorktreePath(workspacePath: string, branch: string, agents
  */
 export function siblingWorktreePath(repositoryRoot: string, branch: string): string {
   return join(dirname(repositoryRoot), `${basename(repositoryRoot)}-wt-${flattenBranch(branch)}`)
+}
+
+/**
+ * Derive the `home` checkout directory for a branch: under the user's own
+ * `.agents`, shared by every workspace on the machine.
+ *
+ * This is the one layout that leaves the workspace's tree entirely, which is
+ * what it is for: checkouts of several repositories then sit side by side
+ * instead of nesting inside whichever one was open.
+ * @param agentsRoot - the user-level `.agents` directory.
+ * @param branch - branch the worktree will hold.
+ * @returns an absolute directory path.
+ */
+export function homeWorktreePath(agentsRoot: string, branch: string): string {
+  return join(agentsRoot, 'worktree', flattenBranch(branch))
 }
 
 /**

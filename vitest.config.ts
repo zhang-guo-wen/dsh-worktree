@@ -18,8 +18,12 @@ export default {
       'tests/seat.spec.ts',
       'tests/registration.spec.ts',
       'tests/navigation.spec.ts',
+      'tests/settings.spec.ts',
     ],
     environment: 'node',
     pool: 'forks',
+    // Real git over scratch repositories: the default bound measures the host's
+    // load as much as the behavior under test.
+    testTimeout: 30_000,
   },
 }

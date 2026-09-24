@@ -54,8 +54,10 @@ export function registerTools(
       'Create an isolated Git worktree of the current repository and return its path. '
       + 'Use it to work on a separate branch without disturbing the current checkout. '
       + 'The new checkout is a DIFFERENT directory: files, git state, and uncommitted '
-      + 'changes there are independent of the current one. This tool only creates the '
-      + 'checkout — it does not move your session into it.',
+      + 'changes there are independent of the current one. Submodules this repository '
+      + 'records, and — where the deployment is configured for it — repositories nested '
+      + 'inside this one, are created with it, each on its own branch. This tool only '
+      + 'creates the checkout — it does not move your session into it.',
     parameters: {
       branch: {
         type: 'string',
@@ -80,12 +82,30 @@ export function registerTools(
           head: { type: 'string', required: true },
           repositoryRoot: { type: 'string', required: true },
           sessionStarted: { type: 'boolean', required: true },
+          nested: {
+            type: 'array',
+            required: true,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                path: { type: 'string', required: true },
+                branch: { type: 'string', required: true },
+                repositoryRoot: { type: 'string', required: true },
+              },
+            },
+          },
         },
       },
       render: (_args, value) => [{
         type: 'text',
         text: `Created worktree ${value.path} on branch ${value.branch} (${value.head.slice(0, 12)}) `
-          + `from ${value.repositoryRoot}.`,
+          + `from ${value.repositoryRoot}.`
+          + (value.nested.length === 0
+            ? ''
+            : ` Nested repositories came with it: ${value.nested
+              .map(entry => `${entry.path} [${entry.branch}]`)
+              .join(', ')}.`),
       }],
     },
     async execute(args, exec) {
@@ -101,6 +121,11 @@ export function registerTools(
         head: created.head,
         repositoryRoot: created.repositoryRoot,
         sessionStarted: false,
+        nested: created.nested.map(entry => ({
+          path: entry.path,
+          branch: entry.branch,
+          repositoryRoot: entry.repositoryRoot,
+        })),
       }
     },
     presentCall: args => ({
@@ -168,7 +193,8 @@ export function registerTools(
   ctx.tools.register(defineTool({
     name: toolNames.remove,
     description:
-      'Remove a linked Git worktree created earlier. The main checkout is refused. '
+      'Remove a linked Git worktree created earlier, together with the checkouts of '
+      + 'repositories nested inside it. The main checkout is refused. '
       + 'A worktree with uncommitted changes is refused unless force is set, because '
       + 'removal discards that work.',
     parameters: {

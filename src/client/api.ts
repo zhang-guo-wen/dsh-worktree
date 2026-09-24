@@ -25,8 +25,15 @@ export interface WorktreeEntry {
 
 /** A successful `start` result. */
 export interface StartResult {
-  /** The checkout that was created. */
-  readonly worktree: WorktreeEntry & { readonly repositoryRoot: string }
+  /**
+   * The checkout that was created, with the nested checkouts that came with it
+   * (a repository's submodules, and the repositories nested inside it when the
+   * deployment materializes them).
+   */
+  readonly worktree: WorktreeEntry & {
+    readonly repositoryRoot: string
+    readonly nested?: readonly WorktreeEntry[]
+  }
   /** Project registered for the checkout. */
   readonly workspaceId: string
   /** Session started inside it. */

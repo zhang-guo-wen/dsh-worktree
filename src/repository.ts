@@ -13,31 +13,45 @@ import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 /**
- * The main repository root containing `checkout`.
+ * The main repository that owns a linked checkout, when `checkout` is one.
  *
- * A `.git` directory means the checkout is itself the main worktree. A `.git`
- * file means a linked worktree: its `gitdir:` target ends in
- * `.git/worktrees/<name>`, and stripping that suffix yields the repository that
- * owns every linked checkout. A `.git` file pointing anywhere else (a
- * submodule, or a checkout whose gitdir was moved) leaves the path unchanged,
- * because the caller's directory is then the best answer available and Git
- * itself will reject an operation that cannot work there.
+ * A linked worktree's `.git` is a file naming `<main>/.git/worktrees/<name>`,
+ * which is what makes the owning repository recoverable from the checkout
+ * alone. A `.git` file pointing anywhere else is not a linked worktree: a
+ * submodule's gitdir lives under `.git/modules/<name>`, and a checkout whose
+ * gitdir was moved names a directory this module cannot interpret, so both
+ * answer undefined rather than a guess.
  * @param checkout - absolute directory to resolve the owning repository of.
- * @returns the main repository root, or `checkout` when it cannot be recovered.
+ * @returns the main repository root, or undefined when the directory is not a linked worktree.
  */
-export async function mainRepositoryRoot(checkout: string): Promise<string> {
+export async function linkedWorktreeOwner(checkout: string): Promise<string | undefined> {
   const marker = join(checkout, '.git')
   const info = await statOrUndefined(marker)
-  if (info === undefined || info.isDirectory()) return checkout
+  if (info === undefined || info.isDirectory()) return undefined
   const text = await readFileOrUndefined(marker)
-  if (text === undefined) return checkout
+  if (text === undefined) return undefined
   const recovered = repositoryRootFromGitFile(text)
-  if (recovered === undefined) return checkout
+  if (recovered === undefined) return undefined
   // Git writes the gitdir with forward slashes on every platform, while
   // callers compare this root against paths built by `node:path`. Normalizing
   // here keeps one spelling per host instead of leaking Git's into every
   // consumer.
   return process.platform === 'win32' ? recovered.replace(/\//g, '\\') : recovered
+}
+
+/**
+ * The main repository root containing `checkout`.
+ *
+ * A linked worktree's `.git` is a file naming `<main>/.git/worktrees/<name>`,
+ * so the session that requests a worktree may itself already be running inside
+ * one. `git worktree add` must run against the common repository, never against
+ * a linked checkout, which is why this module exists as its own step rather
+ * than being folded into the command that follows it.
+ * @param checkout - absolute directory to resolve the owning repository of.
+ * @returns the main repository root, or `checkout` when it cannot be recovered.
+ */
+export async function mainRepositoryRoot(checkout: string): Promise<string> {
+  return await linkedWorktreeOwner(checkout) ?? checkout
 }
 
 /**

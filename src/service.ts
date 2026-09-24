@@ -13,8 +13,14 @@
  */
 
 import { mkdir, realpath, stat } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { homedir } from 'node:os'
+import { dirname, join, relative, sep } from 'node:path'
 import { runGit } from './git.ts'
+import { findNestedCheckouts, findNestedRepositories } from './nested.ts'
+import {
+  DEFAULT_AGENTS_DIRECTORY, DEFAULT_GIT_TIMEOUT_MS, DEFAULT_NESTED_REPOSITORIES, DEFAULT_NESTED_SCAN_DEPTH,
+  DEFAULT_WORKTREE_LAYOUT, type NestedRepositoryPolicy,
+} from './policy.ts'
 import { parseBranchList, parseWorktreeList, type WorktreeRecord } from './porcelain.ts'
 import { mainRepositoryRoot } from './repository.ts'
 import {
@@ -23,6 +29,7 @@ import {
   assertAgentsDirectory,
   assertBranchName,
   defaultBranchName,
+  homeWorktreePath,
   siblingWorktreePath,
   type WorktreeLayout,
 } from './validate.ts'
@@ -39,10 +46,38 @@ export interface WorktreeInfo {
   readonly main: boolean
 }
 
+/**
+ * Which of the repositories hanging off a checkout come with it.
+ *
+ * `none` creates the parent repository's checkout alone, `submodules`
+ * materializes the gitlinks the parent records, and `all` also gives every
+ * independently nested repository a linked checkout of its own inside the new
+ * directory. The choice is deployment policy: `submodules` is what a checkout
+ * of a recorded tree owes its caller, while `all` additionally reaches into
+ * repositories the parent does not track.
+ */
+export type { NestedRepositoryPolicy } from './policy.ts'
+
+/** A nested repository's checkout, created together with its parent's. */
+export interface NestedWorktree {
+  /** Absolute checkout path, inside the parent checkout. */
+  readonly path: string
+  /** Branch created for it in its own repository. */
+  readonly branch: string
+  /** Main repository root of the nested repository. */
+  readonly repositoryRoot: string
+}
+
 /** A completed worktree creation. */
 export interface CreatedWorktree extends WorktreeInfo {
   /** Main repository root the checkout was created from. */
   readonly repositoryRoot: string
+  /**
+   * Nested checkouts created with this one, outermost first. Empty when the
+   * policy is `none`, when the repository has no nested repositories, or when
+   * it has submodules but the policy materialized none of them.
+   */
+  readonly nested: readonly NestedWorktree[]
 }
 
 /** Inputs accepted when creating a worktree. */
@@ -78,6 +113,12 @@ export interface WorktreeServiceOptions {
   readonly defaultPath?: WorktreeLayout
   /** Repository-relative directory the `agents` layout creates checkouts in. */
   readonly agentsDirectory?: string
+  /** User-level `.agents` directory the `home` layout creates checkouts under; defaults to `~/.agents`. */
+  readonly homeAgentsDirectory?: string
+  /** Which nested repositories come with a checkout; defaults to `none`. */
+  readonly nestedRepositories?: NestedRepositoryPolicy
+  /** Directory levels searched below a repository root for nested repositories; defaults to 1. */
+  readonly nestedScanDepth?: number
 }
 
 /**
@@ -88,19 +129,52 @@ export interface WorktreeServiceOptions {
  * inside a linked worktree still operates on the repository that owns it.
  */
 export class WorktreeService {
-  private readonly timeoutMs: number
-  private readonly defaultPath: WorktreeLayout
-  private readonly agentsDirectory: string
+  private timeoutMs: number
+  private defaultPath: WorktreeLayout
+  private agentsDirectory: string
+  private homeAgentsDirectory: string
+  private nestedRepositories: NestedRepositoryPolicy
+  private nestedScanDepth: number
 
   /**
-   * @param options - git bound and the layout a default path is derived from.
-   * @throws {Error} when `agentsDirectory` cannot be a workspace-relative directory.
+   * @param options - git bound, the layout a default path is derived from, and the nested-repository policy.
+   * @throws {Error} when `agentsDirectory` cannot be a workspace-relative directory, or `nestedScanDepth` is not a positive integer.
    */
   constructor(options: WorktreeServiceOptions = {}) {
-    this.timeoutMs = options.timeoutMs ?? 60_000
-    this.defaultPath = options.defaultPath ?? 'agents'
-    this.agentsDirectory = options.agentsDirectory ?? '.agents/worktree'
-    assertAgentsDirectory(this.agentsDirectory)
+    this.timeoutMs = 0
+    this.defaultPath = 'agents'
+    this.agentsDirectory = '.agents/worktree'
+    this.homeAgentsDirectory = join(homedir(), '.agents')
+    this.nestedRepositories = 'none'
+    this.nestedScanDepth = 1
+    this.reconfigure(options)
+  }
+
+  /**
+   * Replace the policy every later call runs under.
+   *
+   * A deployment's settings are live: the fields this service reads are
+   * editable while it runs, so they are read at the moment each call uses them.
+   * Replacing them here — rather than rebuilding the registration — keeps the
+   * service identity every consumer already holds. Validation matches the
+   * constructor's, so a policy that could not have been constructed cannot be
+   * installed afterwards either.
+   * @param options - the complete new policy; an omitted field reverts to its default.
+   * @throws {Error} when a field cannot be a worktree policy.
+   */
+  reconfigure(options: WorktreeServiceOptions = {}): void {
+    const agentsDirectory = options.agentsDirectory ?? DEFAULT_AGENTS_DIRECTORY
+    const nestedScanDepth = options.nestedScanDepth ?? DEFAULT_NESTED_SCAN_DEPTH
+    assertAgentsDirectory(agentsDirectory)
+    if (!Number.isSafeInteger(nestedScanDepth) || nestedScanDepth < 1) {
+      throw new Error(`nestedScanDepth must be a positive integer: ${JSON.stringify(nestedScanDepth)}`)
+    }
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS
+    this.defaultPath = options.defaultPath ?? DEFAULT_WORKTREE_LAYOUT
+    this.agentsDirectory = agentsDirectory
+    this.homeAgentsDirectory = options.homeAgentsDirectory ?? join(homedir(), '.agents')
+    this.nestedRepositories = options.nestedRepositories ?? DEFAULT_NESTED_REPOSITORIES
+    this.nestedScanDepth = nestedScanDepth
   }
 
   /**
@@ -155,12 +229,23 @@ export class WorktreeService {
     if (created === undefined) {
       throw new Error(`git reported success creating ${JSON.stringify(target)} but the worktree is not listed`)
     }
+    const checkout = await canonical(created.path)
+    // Nested repositories come over only once the parent's directory exists:
+    // every one of their checkouts is a directory inside it.
+    const nested: NestedWorktree[] = []
+    try {
+      if (this.nestedRepositories !== 'none') await this.attachSubmodules(checkout)
+      if (this.nestedRepositories === 'all') await this.attachRepositories(repositoryRoot, checkout, nested)
+    } catch (error: unknown) {
+      await this.rollback(repositoryRoot, checkout, nested, error)
+    }
     return {
-      path: await canonical(created.path),
+      path: checkout,
       branch: created.branch,
       head: created.head,
       main: false,
       repositoryRoot,
+      nested,
     }
   }
 
@@ -188,12 +273,18 @@ export class WorktreeService {
   }
 
   /**
-   * Remove one linked worktree.
+   * Remove one linked worktree, together with the nested checkouts inside it.
    *
    * The requested path is matched against the repository's own listing before
    * it becomes a git argument, so a path the model invented cannot reach
    * `git worktree remove`. The main worktree is refused: removing it would
    * delete the repository itself.
+   *
+   * Nested checkouts are removed first, and each is held to the same rule as
+   * the caller's own checkout: they are worktrees of OTHER repositories, whose
+   * records would survive with their directories gone if the parent's
+   * directory were removed first. Local work is checked before anything is
+   * destroyed, so a refusal leaves every checkout in place.
    * @param request - the caller's directory, the checkout to remove, and whether to force.
    * @returns the record that was removed, as it was last listed.
    */
@@ -210,9 +301,17 @@ export class WorktreeService {
     if (target.main) {
       throw new Error(`refusing to remove the main worktree ${JSON.stringify(target.path)}`)
     }
-    await this.git(repositoryRoot, [
-      'worktree', 'remove', ...request.force === true ? ['--force'] : [], target.path,
-    ])
+    const nested = await findNestedCheckouts(target.path, this.nestedScanDepth)
+    // The nested directories are this checkout's own untracked content, so the
+    // caller's checkout is judged without them: they are checked on their own
+    // and removed before it.
+    const nestedPaths = nested.map(entry => relativeFrom(target.path, entry.path))
+    await this.assertRemovable(target.path, nestedPaths, request.force)
+    for (const entry of [...nested].reverse()) {
+      await this.assertRemovable(entry.path, [], request.force)
+      await this.removeCheckout(entry.repositoryRoot, entry.path, request.force)
+    }
+    await this.removeCheckout(repositoryRoot, target.path, request.force)
     return target
   }
 
@@ -265,9 +364,158 @@ export class WorktreeService {
    * @returns an absolute directory path.
    */
   private defaultTarget(workspacePath: string, repositoryRoot: string, branch: string): string {
-    return this.defaultPath === 'sibling'
-      ? siblingWorktreePath(repositoryRoot, branch)
-      : agentsWorktreePath(workspacePath, branch, this.agentsDirectory)
+    if (this.defaultPath === 'sibling') return siblingWorktreePath(repositoryRoot, branch)
+    if (this.defaultPath === 'home') return homeWorktreePath(this.homeAgentsDirectory, branch)
+    return agentsWorktreePath(workspacePath, branch, this.agentsDirectory)
+  }
+
+  /**
+   * Materialize the submodules one checkout records.
+   *
+   * `git worktree add` creates each gitlink as an empty directory, so a checkout
+   * of a repository with submodules is incomplete without this step. Git keeps
+   * every worktree's submodule git directory under that worktree's own
+   * administrative entry, so materializing them here leaves the checkouts the
+   * caller already had untouched.
+   * @param checkout - the checkout to populate.
+   */
+  private async attachSubmodules(checkout: string): Promise<void> {
+    if (!await isFile(join(checkout, '.gitmodules'))) return
+    await this.git(checkout, ['submodule', 'update', '--init', '--recursive'])
+  }
+
+  /**
+   * Attach one linked checkout per repository nested inside the caller's.
+   *
+   * Each nested repository is its own repository with its own branch space, so
+   * its checkout is created the same way the caller's was: a new branch named
+   * after the branch it currently holds, based on that branch. The checkout
+   * path mirrors the nested repository's place under the original repository
+   * root, which puts it inside the new checkout where the original directory
+   * was — the path is what makes the copied tree recognizable.
+   * @param repositoryRoot - repository root the nested repositories are found under.
+   * @param checkout - the parent checkout the nested ones are created inside.
+   * @param created - collects each nested creation, in creation order.
+   */
+  private async attachRepositories(
+    repositoryRoot: string,
+    checkout: string,
+    created: NestedWorktree[],
+  ): Promise<void> {
+    for (const nested of await findNestedRepositories(repositoryRoot, this.nestedScanDepth)) {
+      const target = join(checkout, ...nested.relative.split('/'))
+      const base = await this.currentBranch(nested.root)
+      const branch = defaultBranchName(base === DETACHED_HEAD ? undefined : base)
+      await mkdir(dirname(target), { recursive: true })
+      await this.git(nested.root, [
+        'worktree', 'add', '-b', branch, target, ...base === DETACHED_HEAD ? [] : [base],
+      ])
+      created.push({ path: target, branch, repositoryRoot: nested.root })
+    }
+  }
+
+  /**
+   * The branch one repository's own checkout holds.
+   * @param repositoryRoot - repository root to read.
+   * @returns the short branch name, or `HEAD` for a detached or unborn HEAD.
+   */
+  private async currentBranch(repositoryRoot: string): Promise<string> {
+    return (await this.git(repositoryRoot, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+  }
+
+  /**
+   * Undo a creation whose nested repositories could not all be attached.
+   *
+   * The caller asked for the whole tree or nothing, so every checkout this call
+   * created is removed — nested ones first, because each was created inside the
+   * one before it. A cleanup that itself fails is reported beside the original
+   * failure rather than replacing it: a directory left behind is a fact the
+   * caller has to act on, and the reason the creation failed is still the
+   * reason.
+   * @param repositoryRoot - main repository root of the caller's checkout.
+   * @param checkout - the parent checkout to remove.
+   * @param nested - the nested creations to remove, in creation order.
+   * @param cause - the failure being reported.
+   * @throws {Error} always, carrying the cause.
+   */
+  private async rollback(
+    repositoryRoot: string,
+    checkout: string,
+    nested: readonly NestedWorktree[],
+    cause: unknown,
+  ): Promise<never> {
+    const failures: string[] = []
+    for (const entry of [...nested].reverse()) {
+      try {
+        await this.git(entry.repositoryRoot, ['worktree', 'remove', '--force', entry.path])
+      } catch (error: unknown) {
+        failures.push(`${entry.path} (${reason(error)})`)
+        await this.pruneQuietly(entry.repositoryRoot)
+      }
+    }
+    try {
+      await this.git(repositoryRoot, ['worktree', 'remove', '--force', checkout])
+    } catch (error: unknown) {
+      failures.push(`${checkout} (${reason(error)})`)
+      await this.pruneQuietly(repositoryRoot)
+    }
+    if (failures.length > 0) {
+      throw new Error(`${reason(cause)}; cleanup also failed for ${failures.join(', ')}`)
+    }
+    throw cause
+  }
+
+  /**
+   * Refuse to remove a checkout that holds work nobody has committed.
+   *
+   * Git's own removal rule is the same one, but Git cannot state it for a
+   * checkout it refuses outright (see {@link removeCheckout}), so the rule is
+   * applied here where the caller can read it. Paths the caller is about to
+   * remove first are excluded from the caller's own checkout, because they are
+   * other repositories' work and are judged on their own.
+   * @param checkout - the checkout being removed.
+   * @param excluded - repository-relative paths inside it that this removal also removes.
+   * @param force - the caller's explicit permission to discard local work.
+   * @throws {Error} naming the checkout and how much work is at stake.
+   */
+  private async assertRemovable(checkout: string, excluded: readonly string[], force: boolean | undefined): Promise<void> {
+    if (force === true) return
+    const pathspecs = ['.', ...excluded.map(path => `:(exclude,literal)${path}`)]
+    const raw = await this.git(checkout, ['status', '--porcelain', '--untracked-files=normal', '--', ...pathspecs])
+    const changes = raw.trim()
+    if (changes === '') return
+    throw new Error(
+      `refusing to remove ${JSON.stringify(checkout)}: it has uncommitted work `
+      + `(${String(changes.split('\n').length)} path(s)); pass force to remove it anyway`,
+    )
+  }
+
+  /**
+   * Remove one checkout from the repository that owns it.
+   *
+   * Git refuses to remove any worktree holding a materialized submodule, clean
+   * or not, so such a checkout is removed with force — its local work has
+   * already been checked by the caller. Every other checkout is offered to Git
+   * unchanged, so Git's own refusals (a locked worktree, an unexpected state)
+   * still stand.
+   * @param repositoryRoot - main repository root that owns the checkout.
+   * @param path - the checkout to remove.
+   * @param force - the caller's explicit permission to discard local work.
+   */
+  private async removeCheckout(repositoryRoot: string, path: string, force: boolean | undefined): Promise<void> {
+    const forced = force === true || await this.hasSubmodules(path)
+    await this.git(repositoryRoot, ['worktree', 'remove', ...forced ? ['--force'] : [], path])
+  }
+
+  /**
+   * Whether any submodule of one checkout is materialized.
+   * @param checkout - the checkout to inspect.
+   * @returns true when at least one submodule directory holds a checkout.
+   */
+  private async hasSubmodules(checkout: string): Promise<boolean> {
+    if (!await isFile(join(checkout, '.gitmodules'))) return false
+    const raw = await this.git(checkout, ['submodule', 'status', '--recursive'])
+    return raw.split('\n').some(line => line.trim().length > 0 && !line.startsWith('-'))
   }
 
   /**
@@ -336,6 +584,28 @@ function samePath(left: string, right: string): boolean {
 }
 
 /**
+ * Express one path relative to another, with `/` separators.
+ * @param root - directory the result is relative to.
+ * @param path - path to express.
+ * @returns the relative path as Git's pathspecs spell it.
+ */
+function relativeFrom(root: string, path: string): string {
+  return relative(root, path).split(sep).join('/')
+}
+
+/**
+ * Describe a caught failure for a diagnostic.
+ * @param error - a caught failure.
+ * @returns its message, or its string form.
+ */
+function reason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/** The abbreviation Git prints for a HEAD that names no branch. */
+const DETACHED_HEAD = 'HEAD'
+
+/**
  * Enforce a deadline on one git invocation.
  * @param work - the pending git result.
  * @param timeoutMs - the bound in milliseconds.
@@ -366,6 +636,21 @@ async function withTimeout<T>(work: Promise<T>, timeoutMs: number, label: string
 export async function isDirectory(path: string): Promise<boolean> {
   try {
     return (await stat(path)).isDirectory()
+  } catch (error: unknown) {
+    // Absence is the answer this predicate reports, not a failure.
+    void error
+    return false
+  }
+}
+
+/**
+ * Whether a path names an existing regular file.
+ * @param path - candidate file.
+ * @returns true when the path is an existing file.
+ */
+async function isFile(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile()
   } catch (error: unknown) {
     // Absence is the answer this predicate reports, not a failure.
     void error
