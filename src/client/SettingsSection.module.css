@@ -1,0 +1,246 @@
+/* The worktree settings page. The rows are the settings column's two-column
+   shape — label and explanation left, control right — matching the General
+   section's rows (PreferenceRow, FontSizeRow): pad 16/0, a hairline under each
+   row, 14px titles over 12px descriptions, and a capsule control on the
+   trailing edge. The page title and the two-button footer follow the Models
+   page's title and the shared form's save, so this page's chrome is the
+   product's chrome; only the controls are its own. */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.pageTitle {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 24px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.notice {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 0;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+/* The text column keeps the control clear of it: a long explanation wraps
+   instead of pushing the control off the row. */
+.rowText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 48px;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.desc {
+  max-width: 62ch;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.control {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Three buttons and a sliding selection, built the way the Appearance row
+   builds its own three-way choice: buttons carrying aria-pressed, because a
+   preference has no panel behind it for tab semantics to control. The track is
+   the hover wash, so it reads as a place rather than a second control; the one
+   raised part is the selected segment. Its width and offset come from the
+   segment count and index, so nothing measures the DOM. */
+.choices {
+  position: relative;
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 18px;
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.indicator {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc((100% - 6px - 2px * (var(--dsh-choice-count) - 1)) / var(--dsh-choice-count));
+  height: calc(100% - 6px);
+  border-radius: 15px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-elevation-soft);
+  transform: translateX(calc(var(--dsh-choice-index) * (100% + 2px)));
+  transition: transform 160ms ease;
+  pointer-events: none;
+}
+
+.choice {
+  position: relative;
+  z-index: 1;
+  height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 15px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+.choice:hover:not(:disabled),
+.choice[aria-pressed='true'] {
+  color: var(--dsw-alias-label-primary);
+}
+
+.choice:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.choice:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .indicator,
+  .choice {
+    transition: none;
+  }
+}
+
+/* Value capsule: the General rows' pill (h36 r18, module fill), holding what
+   the user types. */
+.input {
+  height: 36px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 18px;
+  background: var(--dsw-alias-bg-module-platform);
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+.input:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: default;
+}
+
+.input[aria-invalid='true'] {
+  outline: 2px solid var(--dsw-alias-state-error-primary);
+  outline-offset: -1px;
+}
+
+.inputNumber {
+  width: 104px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Footer: the two actions together at the trailing edge. A save whose reset
+   sits somewhere else is a reset nobody finds, and this page's rows are the
+   only thing either button acts on. */
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 16px;
+}
+
+.failed {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-error);
+}
+
+.resetAll {
+  appearance: none;
+  border: 1px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  padding: 5px 14px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.resetAll:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary);
+}
+
+.resetAll:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.resetAll:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+/* The shared settings save, at this page's trailing edge. */
+.save {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 5px 14px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-layer-3);
+}
+
+.save:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.save:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}

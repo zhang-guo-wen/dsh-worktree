@@ -1,0 +1,179 @@
+/* Worktree control. One ghost pill holds the branch segment and the worktree
+   segment, divided by a hairline; geometry follows the neighbouring hero chips
+   so the group reads as the same kind of control. The composer dock renders
+   below the hero control row, so this wrapper lifts the pill onto that row.
+
+   The two halves speak the same ghost language as the chips beside them — no
+   border, no fill; a segment's hover and the short hairline between the halves
+   carry the control — and are drawn one step smaller than those 28px chips and
+   clear of the composer card: a 4px gap under the pill, where the card and the
+   pill would otherwise meet edge to edge, and a 12px inset from the card's
+   right edge, because the card's 22px top-right corner recedes toward the
+   pill. */
+
+.row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 16px;
+}
+
+/* The hero's control row — the workspace picker and the agent-preset chip —
+   declares no seat of its own: both of its slots are single-occupant, so this
+   dock row is the next line below it. In the hero phase the row therefore takes
+   no height and cancels the stack gaps it would otherwise add, and the pill is
+   lifted onto the control row's line, right-aligned inside that row's own
+   horizontal padding. Anywhere else the control keeps a line of its own, which
+   is where a staged choice above the queue and todo docks belongs. */
+:global([data-phase='hero']) .row,
+:global([data-content-phase='hero']) .row {
+  position: relative;
+  height: 0;
+  /* The hero stack's 8px gap on each side: a zero-height row must move neither
+     the control row above it nor the composer card below it. */
+  margin: -8px 0;
+}
+
+.pill {
+  display: inline-flex;
+  /* Stretch, not center: each segment then fills the pill's height, so a hover
+     fill covers its whole half. The segments center their own contents. */
+  align-items: stretch;
+  /* Border-box: the 24px line is the pill's outer height, matching how the
+     neighbouring chips size themselves. */
+  box-sizing: border-box;
+  height: 24px;
+  /* No border and no fill: the control belongs to the same ghost row as the
+     chips beside it, and only the segment hovers and the hairline between the
+     two halves draw it. The radius still clips those fills to a rounded end. */
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  overflow: hidden;
+}
+
+:global([data-phase='hero']) .pill,
+:global([data-content-phase='hero']) .pill {
+  position: absolute;
+  /* 16px is the card's own side clearance; 12 more keeps the pill off the
+     card's 22px top-right corner and lands its edge where the workspace chip's
+     glyph sits inside the card's left edge. */
+  right: 28px;
+  /* 100% of a zero-height containing block is the composer card's top edge, so
+     the gap is measured from the card: the pill floats 4px above it. */
+  bottom: calc(100% + 4px);
+  /* The row's own 16px padding plus this inset: a long branch name may reach
+     the control row's left end but never past it. */
+  max-width: min(calc(100% - 44px), 560px);
+}
+
+/* Branch segment: the menu trigger holding the base a new branch starts from. */
+.branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+  min-width: 0;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.branch:not(:disabled):hover,
+.branch[aria-expanded='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.branch:disabled {
+  cursor: default;
+  color: var(--dsw-alias-label-quaternary);
+}
+
+.branchIcon {
+  flex: none;
+}
+
+.branchLabel {
+  min-width: 0;
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The hairline that keeps the two halves one control. Half the pill's height:
+   with no container around it, a full-height rule reads as a stray box edge. */
+.divider {
+  flex: none;
+  align-self: center;
+  width: 1px;
+  height: 12px;
+  background: var(--dsw-alias-border-l2);
+}
+
+/* Worktree segment: the box, the glyph, and the text are one labeled row, in
+   that order. The Checkbox primitive renders a box followed by plain text only
+   — this segment's glyph travels with the text, between the two — so the
+   segment keeps its own row, repeating the primitive's box, focus ring, and
+   disabled treatment at this line's size. Both halves of the pill carry the
+   same 13px/500 type as the ghost chips in this row. */
+.seat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 8px;
+  border-radius: 12px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.seat:not(:has(input:disabled)):hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.seat:has(input:disabled) {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.seat input {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--dsw-alias-brand-primary);
+  cursor: inherit;
+}
+
+.seat input:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+.seatGlyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--dsw-alias-label-primary);
+}
+
+.seatIconError {
+  flex: none;
+  margin-right: 6px;
+  color: var(--dsw-alias-label-danger, #d33);
+}
