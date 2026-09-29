@@ -1,7 +1,7 @@
 {
   "name": "@guowenzhang/dsh-worktree",
   "description": "Git worktree isolation for DeepSeek Harness: create a worktree, register it as its own project, and start the session inside it",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "license": "Apache-2.0",
   "main": "lib/index.mjs",
