@@ -15,6 +15,8 @@ A session working directory is frozen when the session is created, so working in
 ![The worktree capsule on the New Session screen](docs/images/new-session.png)
 Ticking `worktree` at the right end of the `选择工作区 / 模式` row creates the checkout and starts the session inside it.
 
+The task-list integration can prompt to initialize a selected non-Git workspace. After explicit confirmation, `/worktree/api/init` accepts its registered workspace ID, lists the workspace's top-level files and folders, then creates `.git` and a first commit containing the selected items and `.gitignore`. Unselected items receive root-anchored ignore rules; the task list then starts a worktree. Existing `.gitignore` rules are preserved.
+
 ![The Worktree settings page](docs/images/worktree-settings.png)
 设置 → Worktree: 创建子仓库, 扫描层级, and worktree 存储位置, with 恢复默认 / 保存.
 
@@ -53,7 +55,7 @@ A locked control offers no change — both segments are disabled and the chevron
 
 ### Choose the checkout layout
 
-**设置 → Worktree**, titled 「worktree 配置」, is one settings page with three rows in the usual label-left / control-right form:
+**设置 → Worktree**, titled 「worktree 配置」, explains how isolated workspaces support parallel work and checks whether the Host can run Git. If Git is missing, it prompts you to install Git, add it to the Host's PATH, and restart DSH. The three settings rows retain the usual label-left / control-right form:
 
 - **创建子仓库** — off by default. On means the submodules a checkout records, and the repositories nested inside it, are created along with it; off means the parent repository alone.
 - **扫描层级** — how many directory levels below the repository root are searched for nested repositories, defaulting to 1 (the direct children). The row is disabled until **创建子仓库** is on.

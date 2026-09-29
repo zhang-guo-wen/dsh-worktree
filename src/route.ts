@@ -1,5 +1,5 @@
 /**
- * The `/worktree/api` Host route.
+ * The `/worktree/api` Host route, including registered-workspace initialization.
  *
  * Starting a session inside a new worktree is one operation, not three: the
  * checkout, its workspace record, and the session must appear together or not
@@ -18,8 +18,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
+import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
+import { GitCommandError, isGitWorkTree, runGit } from './git.ts'
 import { startSessionIn } from './session.ts'
-import type { WorktreeService } from './service.ts'
+import { InvalidInitialSelectionError, type WorktreeService } from './service.ts'
 
 /** Request body of the `start` method. */
 interface StartRequest {
@@ -94,6 +96,15 @@ function requireString(value: unknown, field: string): string {
   return value
 }
 
+/** Parse optional top-level names selected for an initial commit. */
+function selectedEntries(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value) || !value.every(name => typeof name === 'string' && name.length > 0)) {
+    throw new RouteError(400, 'selectedEntries must be an array of top-level names')
+  }
+  return value as string[]
+}
+
 /**
  * Register the `/worktree/api` route.
  *
@@ -122,6 +133,11 @@ export function registerRoute(ctx: Context, service: WorktreeService): void {
           if (req.method !== 'POST') throw new RouteError(405, 'method not allowed')
           const method = new URL(req.url ?? '/', 'http://dsh.internal').pathname.slice('/worktree/api/'.length)
           const body = await readJsonBody(req)
+          if (method === 'check') {
+            stage = 'git'
+            writeJson(res, 200, { version: (await runGit(process.cwd(), ['--version'])).trim() })
+            return
+          }
           if (method === 'start') {
             writeJson(res, 200, await start(scope, service, body, (next) => { stage = next }))
             return
@@ -131,6 +147,24 @@ export function registerRoute(ctx: Context, service: WorktreeService): void {
             writeJson(res, 200, { worktrees: await service.list(requireString(body.cwd, 'cwd')) })
             return
           }
+          if (method === 'init-files') {
+            stage = 'init-files'
+            const workspaceId = requireString(body.workspaceId, 'workspaceId')
+            const workspace = scope.workspaceRegistry.get(WorkspaceId(workspaceId))
+            if (workspace === undefined) throw new RouteError(404, 'workspace not found')
+            writeJson(res, 200, { entries: await service.initialCommitEntries(workspace.path) })
+            return
+          }
+          if (method === 'init') {
+            stage = 'init'
+            const workspaceId = requireString(body.workspaceId, 'workspaceId')
+            const workspace = scope.workspaceRegistry.get(WorkspaceId(workspaceId))
+            if (workspace === undefined) throw new RouteError(404, 'workspace not found')
+            if (await isGitWorkTree(workspace.path)) throw new RouteError(409, 'workspace is already a Git repository')
+            await service.initialize(workspace.path, selectedEntries(body.selectedEntries))
+            writeJson(res, 200, { initialized: true, path: workspace.path })
+            return
+          }
           if (method === 'branches') {
             stage = 'branches'
             writeJson(res, 200, { branches: await service.listBranches(requireString(body.cwd, 'cwd')) })
@@ -138,13 +172,14 @@ export function registerRoute(ctx: Context, service: WorktreeService): void {
           }
           throw new RouteError(404, `unknown worktree API method ${JSON.stringify(method)}`)
         } catch (error: unknown) {
-          const status = error instanceof RouteError ? error.status : 500
+          const status = error instanceof RouteError ? error.status : error instanceof InvalidInitialSelectionError ? 409 : 500
           // The stage names which step failed. Without it a bare 500 from an
           // inner service is indistinguishable from a failure in this handler.
           const detail = error instanceof Error ? error.message : String(error)
           const message = `[${stage}] ${detail}`
           scope.logger?.error?.(`dsh-worktree: ${message}`)
-          writeJson(res, status, { error: { message, stage } })
+          const code = error instanceof GitCommandError ? error.code : undefined
+          writeJson(res, status, { error: { message, stage, ...code ? { code } : {} } })
         }
       },
     }), 'dsh-worktree: /worktree/api route')

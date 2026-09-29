@@ -32,7 +32,7 @@ npx @deepseek-ai/dsh plugin --profile web add @guowenzhang/dsh-worktree
 
 在 Git 仓库里开**新会话**时，`选择工作区 / 模式` 那一行的右端出现一个胶囊：`⑂ <分支> ▾ │ ☐ <新建工作区图标> worktree`。左边是**本地分支下拉**——新分支从哪个本地分支开始，默认是当前会话所在 checkout 的分支，取不到就是 `HEAD`。列表在打开菜单时才去读，按最近提交排序，只列 `refs/heads`：远端分支或 tag 会让 `git worktree add` 悄悄进 detached HEAD，所以不给选。界面不提供分支名输入。
 
-勾上 `worktree` 那一段就是全部动作，它按顺序跑四步：用 `git worktree add -b <branch> <path> <base>` 在**主仓库**上建 checkout（会话即使已经在某个 linked worktree 里，也会回溯到主仓库）；把新目录注册成一个工作区；用新目录作为 `meta.cwd` 启动会话；把该会话挂进工作区的账本——会话只通过这本账归属工作区，不挂的话它在 GUI 里是“未分组”，`选择工作区` 也没有名字可显示。之后浏览器再刷新一次会话目录并切到该会话：新会话是 Host 在**客户端 Session Controller 之外**创建的，不先拉一次目录，导航会以 `unknown session` 拒绝这个 id。
+勾上 `worktree` 那一段就是全部动作，它按顺序跑四步：用 `git worktree add -b <branch> <path> <base>` 在**主仓库**上建 checkout（会话即使已经在某个 linked worktree 里，也会回溯到主仓库）；把新目录注册成一个工作区；用新目录作为 `meta.cwd` 启动会话；把该会话挂进工作区的账本——会话只通过这本账归属工作区，不挂的话它在 GUI 里是“未分组”，`选择工作区` 也没有名字可显示。之后浏览器再刷新一次会话目录并切到该会话：新会话是 Host 在**客户端 Session Controller 之外**创建的，不先拉一次目录，导航会以 `unknown session` 拒绝这个 id。`POST /worktree/api/init` 仅接受已登记的工作区 ID，用于任务列表弹窗经用户确认后在非 Git 工作区列出首层文件和目录，并按勾选项创建 `.git` 和首次提交；未勾选项写入根目录 `.gitignore`，原有规则保留。
 
 **勾选是单向的**：勾上就执行创建并开启会话，没有任何路径把它取消勾选。失败分两种。**Host 拒绝**（分支名冲突、不是仓库等）什么都没建：控件回到未勾选并显示原因，再勾是重试。**建好了但没切过去**（导航失败）时控件记住那个新会话，再勾是把它打开，不会建第二个 checkout。
 
@@ -53,7 +53,7 @@ npx @deepseek-ai/dsh plugin --profile web add @guowenzhang/dsh-worktree
 
 ### 选择 checkout 存放位置
 
-**设置 → Worktree**，标题「worktree 配置」，三行，都是设置列一贯的左标签 / 右控件式：
+**设置 → Worktree**，标题「worktree 配置」下会说明并行工作的用途，并检查宿主能否运行 Git。未找到 Git 时，会提示安装 Git、加入宿主的 PATH 并重启 DSH。下方三行保持设置列一贯的左标签 / 右控件式：
 
 - **创建子仓库** —— 默认关。打开表示 checkout 记录的子模块、以及嵌套在它里面的仓库都跟着一起创建；关闭表示只建父仓库自己。
 - **扫描层级** —— 从仓库根往下找嵌套仓库的目录层数，默认 1（直接子目录）。未打开**创建子仓库**前这一行是禁用的。

@@ -12,7 +12,7 @@
  * @module @guowenzhang/dsh-worktree/service
  */
 
-import { mkdir, realpath, stat } from 'node:fs/promises'
+import { appendFile, lstat, mkdir, readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
 import { runGit } from './git.ts'
@@ -44,6 +44,26 @@ export interface WorktreeInfo {
   readonly head: string
   /** Whether this checkout is the main worktree of its repository. */
   readonly main: boolean
+}
+
+/** One top-level item offered for a workspace's first Git commit. */
+export interface InitialCommitEntry {
+  readonly name: string
+  readonly kind: 'file' | 'directory' | 'nested_repository'
+}
+
+export class InvalidInitialSelectionError extends Error {
+  constructor() {
+    super('initial commit selection changed; reopen the dialog and choose the files again')
+    this.name = 'InvalidInitialSelectionError'
+  }
+}
+
+/** Keep one top-level name literal in an anchored .gitignore pattern. */
+function escapeIgnoreName(name: string): string {
+  if (/[\r\n]/u.test(name)) throw new Error('file names containing line breaks cannot be added to .gitignore')
+  const special = new Set(['\\', '*', '?', '[', ']', '#', '!', ' '])
+  return Array.from(name, character => special.has(character) ? `\\${character}` : character).join('')
 }
 
 /**
@@ -175,6 +195,86 @@ export class WorktreeService {
     this.homeAgentsDirectory = options.homeAgentsDirectory ?? join(homedir(), '.agents')
     this.nestedRepositories = options.nestedRepositories ?? DEFAULT_NESTED_REPOSITORIES
     this.nestedScanDepth = nestedScanDepth
+  }
+
+  /** List only top-level items. Git metadata and the rules file are managed separately. */
+  async initialCommitEntries(cwd: string): Promise<InitialCommitEntry[]> {
+    assertAbsolutePath(cwd, 'cwd')
+    const entries = await readdir(cwd, { withFileTypes: true })
+    const result: InitialCommitEntry[] = []
+    for (const entry of entries) {
+      if (entry.name === '.git' || entry.name === '.gitignore') continue
+      if (!entry.isDirectory()) {
+        result.push({ name: entry.name, kind: 'file' })
+        continue
+      }
+      let nestedRepository = false
+      try {
+        await lstat(join(cwd, entry.name, '.git'))
+        nestedRepository = true
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+      result.push({ name: entry.name, kind: nestedRepository ? 'nested_repository' : 'directory' })
+    }
+    return result.sort((left, right) => left.name.localeCompare(right.name))
+  }
+
+  /** Initialize a workspace and optionally stage chosen first-level items. */
+  async initialize(cwd: string, selectedEntries?: readonly string[]): Promise<void> {
+    assertAbsolutePath(cwd, 'cwd')
+    const info = await stat(cwd)
+    if (!info.isDirectory()) throw new Error('workspace path is not a directory')
+    try {
+      await lstat(join(cwd, '.git'))
+      throw new Error('workspace already has Git metadata')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    try {
+      await this.git(cwd, ['rev-parse', '--is-inside-work-tree'])
+      throw new Error('workspace is already inside a Git repository')
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes('not a git repository')) throw error
+    }
+    const entries = selectedEntries === undefined ? [] : await this.initialCommitEntries(cwd)
+    const selectable = new Set(entries.filter(entry => entry.kind !== 'nested_repository').map(entry => entry.name))
+    if (selectedEntries !== undefined && (new Set(selectedEntries).size !== selectedEntries.length
+      || selectedEntries.some(name => !selectable.has(name)))) {
+      throw new InvalidInitialSelectionError()
+    }
+    const ignored = selectedEntries === undefined ? [] : entries.filter(entry => !selectedEntries.includes(entry.name))
+    const ignoreLines = ignored.map(entry => `/${escapeIgnoreName(entry.name)}${entry.kind === 'file' ? '' : '/'}`)
+    const ignorePath = join(cwd, '.gitignore')
+    let ignoreExists = false
+    try {
+      const ignoreInfo = await lstat(ignorePath)
+      if (!ignoreInfo.isFile()) throw new Error('.gitignore must be a regular file')
+      ignoreExists = true
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    await this.git(cwd, ['init', '-q', '-b', 'main'])
+    if (selectedEntries !== undefined) {
+      if (ignored.length > 0) {
+        const existing = ignoreExists ? await readFile(ignorePath, 'utf8') : ''
+        await appendFile(ignorePath, `${existing && !existing.endsWith('\n') ? '\n' : ''}# Excluded from the first commit by DSH Worktree\n${ignoreLines.join('\n')}\n`)
+        ignoreExists = true
+      }
+      if (ignoreExists) await this.git(cwd, ['add', '-f', '--', ':(literal).gitignore'])
+      for (const name of selectedEntries) {
+        try {
+          await this.git(cwd, ['add', '-f', '--', `:(literal)${name}`])
+        } catch (error) {
+          // Git cannot record empty directories; every other failure still
+          // aborts initialization so the user can correct the selection.
+          if (entries.find(entry => entry.name === name)?.kind !== 'directory'
+            || !(error instanceof Error) || !error.message.includes('did not match any files')) throw error
+        }
+      }
+    }
+    await this.git(cwd, ['-c', 'user.name=DeepSeek Harness', '-c', 'user.email=dsh@localhost',
+      'commit', '--allow-empty', '-q', '-m', 'Initialize workspace for worktrees'])
   }
 
   /**

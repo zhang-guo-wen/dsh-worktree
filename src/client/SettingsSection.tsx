@@ -17,11 +17,12 @@
  * @module @guowenzhang/dsh-worktree/client/SettingsSection
  */
 
-import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { WORKTREE_LAYOUTS } from '../policy.ts'
+import { request, type GitCheckResult } from './api.ts'
 import { formLabels, type WorktreeCopyKey } from './locales.ts'
 import type { WorktreeSettingsFace } from './settings-store.ts'
 import css from './SettingsSection.module.css'
@@ -99,6 +100,20 @@ function ChoiceRow(props: {
 export function WorktreeSettingsSection(props: WorktreeSettingsSectionProps) {
   const { t } = props
   const state = props.useWorktreeSettings(snapshot => snapshot)
+  const [gitStatus, setGitStatus] = useState<{ kind: 'checking' | 'available' | 'missing' | 'failed'; detail?: string }>({ kind: 'checking' })
+  useEffect(() => {
+    let active = true
+    void request<GitCheckResult>('check', {}).then(result => {
+      if (!active) return
+      if (result.ok) setGitStatus({ kind: 'available', detail: result.value.version })
+      else if (result.code === 'git_not_found' || /\bspawn\s+git\s+ENOENT\b/iu.test(result.message)) {
+        setGitStatus({ kind: 'missing' })
+      } else setGitStatus({ kind: 'failed', detail: result.message })
+    }).catch(error => {
+      if (active) setGitStatus({ kind: 'failed', detail: error instanceof Error ? error.message : String(error) })
+    })
+    return () => { active = false }
+  }, [])
   const labels = formLabels(t)
   const readOnly = !state.writable
   // A row another row's answer has settled says so where it sits: an inert
@@ -129,6 +144,13 @@ export function WorktreeSettingsSection(props: WorktreeSettingsSectionProps) {
   return (
     <div className={css.page}>
       <h2 className={css.pageTitle}>{t('settings.title')}</h2>
+      <p className={css.pageDescription}>{t('settings.description')}</p>
+      <p className={`${css.gitStatus} ${gitStatus.kind === 'missing' || gitStatus.kind === 'failed' ? css.gitError : ''}`} role="status">
+        {gitStatus.kind === 'checking' ? t('settings.gitChecking')
+          : gitStatus.kind === 'available' ? `${t('settings.gitAvailable')} · ${gitStatus.detail}`
+            : gitStatus.kind === 'missing' ? t('settings.gitMissing')
+              : `${t('settings.gitFailed')}：${gitStatus.detail}`}
+      </p>
       {!state.writable ? <p className={css.notice} role="status">{labels.readOnly}</p> : null}
       <Row
         id="worktree-nested"

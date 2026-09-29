@@ -46,6 +46,14 @@ describe('worktree route client', () => {
     expect(result).toEqual({ ok: false, message: 'branch already exists' })
   })
 
+  it('preserves a Git availability error code for the settings page', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { message: '[git] Git was not found', code: 'git_not_found' } }), {
+      status: 500,
+      headers: { 'content-type': 'application/json' },
+    })))
+    expect(await request('check', {})).toEqual({ ok: false, message: '[git] Git was not found', code: 'git_not_found' })
+  })
+
   it('reports an unreachable route instead of throwing', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('connection refused') }))
     const result = await request('list', { cwd: '/repo' })

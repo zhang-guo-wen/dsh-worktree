@@ -40,6 +40,12 @@ export interface StartResult {
   readonly sessionId: string
 }
 
+/** A registered workspace initialized with an empty first commit. */
+export interface InitResult {
+  readonly initialized: true
+  readonly path: string
+}
+
 /** A successful `list` result. */
 export interface ListResult {
   /** The repository's live checkouts, main worktree first. */
@@ -52,10 +58,15 @@ export interface BranchList {
   readonly branches: string[]
 }
 
+/** Git executable available to the Host. */
+export interface GitCheckResult {
+  readonly version: string
+}
+
 /** The result of one route call. */
 export type RouteResult<T> =
   | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly message: string }
+  | { readonly ok: false; readonly message: string; readonly code?: string }
 
 /**
  * Call one method of the worktree route.
@@ -64,7 +75,7 @@ export type RouteResult<T> =
  * @returns the parsed value, or the Host's refusal text.
  */
 export async function request<T>(
-  method: 'start' | 'list' | 'branches',
+  method: 'start' | 'list' | 'branches' | 'init' | 'check',
   body: Record<string, unknown>,
 ): Promise<RouteResult<T>> {
   let response: Response
@@ -89,7 +100,8 @@ export async function request<T>(
   }
   if (!response.ok) {
     const message = readErrorMessage(parsed) ?? `the worktree route answered ${response.status}`
-    return { ok: false, message }
+    const code = readErrorCode(parsed)
+    return { ok: false, message, ...code === undefined ? {} : { code } }
   }
   return { ok: true, value: parsed as T }
 }
@@ -105,4 +117,13 @@ function readErrorMessage(parsed: unknown): string | undefined {
   if (error === null || typeof error !== 'object') return undefined
   const message = (error as { message?: unknown }).message
   return typeof message === 'string' && message.length > 0 ? message : undefined
+}
+
+/** Read a machine-readable error code, when the Host supplied one. */
+function readErrorCode(parsed: unknown): string | undefined {
+  if (parsed === null || typeof parsed !== 'object') return undefined
+  const error = (parsed as { error?: unknown }).error
+  if (error === null || typeof error !== 'object') return undefined
+  const code = (error as { code?: unknown }).code
+  return typeof code === 'string' ? code : undefined
 }

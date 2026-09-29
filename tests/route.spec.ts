@@ -11,7 +11,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -102,7 +102,7 @@ async function provideSibling(ctx: Context, services: Record<string, unknown>): 
  * route must wait for the service instead.
  * @returns the server URL and the recorded registry calls.
  */
-async function mount(): Promise<Harness> {
+async function mount(initialWorkspace?: { id: string; path: string }): Promise<Harness> {
   const createdWorkspaces: string[] = []
   const createdSessions: { cwd: string | undefined }[] = []
   const attachedSessions: string[] = []
@@ -112,6 +112,7 @@ async function mount(): Promise<Harness> {
   const ctx = new Context()
   await provideSibling(ctx, {
     workspaceRegistry: {
+      get: (id: string) => id === initialWorkspace?.id ? initialWorkspace : undefined,
       create: async (path: string) => {
         createdWorkspaces.push(path)
         if (failWorkspace.value) throw new Error('workspace registry refused')
@@ -189,6 +190,94 @@ async function call(harness: Harness, method: string, body: unknown): Promise<{ 
 }
 
 describe('/worktree/api', () => {
+  it('lists top-level items and commits only the chosen files while ignoring the rest', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-worktree-selected-init-')))
+    created.push(root)
+    writeFileSync(join(root, 'readme.txt'), 'selected\n')
+    writeFileSync(join(root, 'private[1].txt'), 'unselected\n')
+    writeFileSync(join(root, '.gitignore'), '# existing rules\n')
+    mkdirSync(join(root, 'docs'))
+    writeFileSync(join(root, 'docs', 'guide.txt'), 'guide\n')
+    mkdirSync(join(root, 'nested'))
+    mkdirSync(join(root, 'nested', '.git'))
+    writeFileSync(join(root, 'nested', 'file.txt'), 'other repository\n')
+    const harness = await mount({ id: 'workspace-selected', path: root })
+
+    const listed = await call(harness, 'init-files', { workspaceId: 'workspace-selected' })
+    expect(listed.status).toBe(200)
+    expect(listed.body.entries).toEqual(expect.arrayContaining([
+      { name: 'readme.txt', kind: 'file' },
+      { name: 'docs', kind: 'directory' },
+      { name: 'nested', kind: 'nested_repository' },
+    ]))
+    expect(listed.body.entries).not.toEqual(expect.arrayContaining([{ name: '.gitignore', kind: 'file' }]))
+
+    const invalid = await call(harness, 'init', { workspaceId: 'workspace-selected', selectedEntries: ['nested'] })
+    expect(invalid.status).toBe(409)
+    expect(existsSync(join(root, '.git'))).toBe(false)
+
+    const initialized = await call(harness, 'init', {
+      workspaceId: 'workspace-selected', selectedEntries: ['readme.txt', 'docs'],
+    })
+    expect(initialized.status).toBe(200)
+    expect(git(root, ['ls-files']).trim().split(/\r?\n/u).sort()).toEqual(['.gitignore', 'docs/guide.txt', 'readme.txt'])
+    expect(git(root, ['check-ignore', '--no-index', 'private[1].txt']).trim()).toBe('private[1].txt')
+    expect(git(root, ['check-ignore', '--no-index', 'nested']).trim()).toBe('nested')
+    expect(readFileSync(join(root, '.gitignore'), 'utf8')).toContain('# existing rules\n')
+  })
+
+  it('ignores every top-level item when the selection is empty', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-worktree-empty-selection-')))
+    created.push(root)
+    writeFileSync(join(root, 'draft.txt'), 'unselected\n')
+    mkdirSync(join(root, 'assets'))
+    writeFileSync(join(root, 'assets', 'logo.txt'), 'unselected\n')
+    const harness = await mount({ id: 'workspace-empty-selection', path: root })
+    expect((await call(harness, 'init', { workspaceId: 'workspace-empty-selection', selectedEntries: [] })).status).toBe(200)
+    expect(git(root, ['ls-files']).trim()).toBe('.gitignore')
+    expect(git(root, ['check-ignore', '--no-index', 'draft.txt', 'assets/logo.txt']).trim().split(/\r?\n/u))
+      .toEqual(['draft.txt', 'assets/logo.txt'])
+  })
+
+  it('checks Git availability and identifies a missing executable', async () => {
+    const harness = await mount()
+    const ready = await call(harness, 'check', {})
+    expect(ready.status).toBe(200)
+    expect(ready.body.version).toMatch(/^git version /u)
+
+    const emptyPath = mkdtempSync(join(tmpdir(), 'dsh-worktree-path-'))
+    created.push(emptyPath)
+    vi.stubEnv('PATH', emptyPath)
+    try {
+      const missing = await call(harness, 'check', {})
+      expect(missing.status).toBe(500)
+      expect(missing.body.error).toMatchObject({ stage: 'git', code: 'git_not_found' })
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('initializes only a registered workspace with an empty first commit', async () => {
+    const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-worktree-init-')))
+    created.push(scratch)
+    const root = join(scratch, 'plain')
+    mkdirSync(root)
+    writeFileSync(join(root, 'existing.txt'), 'left untouched\n')
+    const harness = await mount({ id: 'workspace-plain', path: root })
+    expect((await call(harness, 'init', { workspaceId: 'unknown' })).status).toBe(404)
+    expect(existsSync(join(root, '.git'))).toBe(false)
+
+    const initialized = await call(harness, 'init', { workspaceId: 'workspace-plain' })
+    expect(initialized.status).toBe(200)
+    expect(git(root, ['log', '-1', '--format=%s']).trim()).toBe('Initialize workspace for worktrees')
+    expect(git(root, ['ls-files']).trim()).toBe('')
+    expect(existsSync(join(root, 'existing.txt'))).toBe(true)
+    expect((await call(harness, 'init', { workspaceId: 'workspace-plain' })).status).toBe(409)
+    const started = await call(harness, 'start', { cwd: root })
+    expect(started.status).toBe(200)
+    expect(String((started.body.worktree as { path: string }).path)).toContain(join(root, '.agents', 'worktree'))
+  })
+
   it('creates a checkout, registers its project, and starts a session inside it', async () => {
     const { root, scratch } = repository()
     const harness = await mount()

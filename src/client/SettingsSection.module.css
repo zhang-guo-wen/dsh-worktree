@@ -13,11 +13,32 @@
 }
 
 .pageTitle {
-  margin: 0 0 8px;
+  margin: 0 0 4px;
   font-size: 16px;
   font-weight: 500;
   line-height: 24px;
   color: var(--dsw-alias-label-primary);
+}
+
+.pageDescription {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.gitStatus {
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.gitError {
+  color: var(--dsw-alias-label-error);
 }
 
 .notice {
@@ -231,8 +252,18 @@
   font-size: 13px;
   line-height: 1.5;
   cursor: pointer;
-  background: var(--dsw-alias-label-primary);
-  color: var(--dsw-alias-bg-layer-3);
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+
+.save:hover:not(:disabled) {
+  background: var(--dsw-alias-button-primary-hover);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+
+.save:hover:disabled {
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
 }
 
 .save:disabled {

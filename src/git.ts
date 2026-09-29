@@ -10,6 +10,7 @@
  */
 
 import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
 
 /** A git invocation that exited nonzero, carrying Git's own diagnostic. */
 export class GitCommandError extends Error {
@@ -22,8 +23,11 @@ export class GitCommandError extends Error {
     readonly args: readonly string[],
     readonly cwd: string,
     readonly stderr: string,
+    readonly code?: 'git_not_found',
   ) {
-    super(`git ${args.join(' ')} failed in ${cwd}: ${stderr}`)
+    super(code === 'git_not_found'
+      ? 'Git was not found. Install Git, add it to the DSH host PATH, then restart DSH.'
+      : `git ${args.join(' ')} failed in ${cwd}: ${stderr}`)
     this.name = 'GitCommandError'
   }
 }
@@ -48,7 +52,9 @@ export async function runGit(cwd: string, args: readonly string[]): Promise<stri
         resolvePromise(stdout)
         return
       }
-      rejectPromise(new GitCommandError(args, cwd, stderr.trim() || error.message))
+      const missingGit = (error as NodeJS.ErrnoException).code === 'ENOENT' && existsSync(cwd)
+      rejectPromise(new GitCommandError(args, cwd, stderr.trim() || error.message,
+        missingGit ? 'git_not_found' : undefined))
     })
   })
 }
