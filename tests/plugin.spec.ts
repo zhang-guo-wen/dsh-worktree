@@ -2,9 +2,10 @@
  * Registration contract of the plugin entry.
  *
  * These specs mount the real plugin on a context carrying the services it
- * declares and assert what it published: the `worktree` service, the three
- * model-facing tools, and the browser route. They are the regression guard for
- * the loader-facing surface, which no behavior spec reaches.
+ * declares and assert what it published: the `worktree` service, the browser
+ * route, and — because the plugin deliberately registers no model-facing tools
+ * — that a tool registry it is handed stays untouched. They are the regression
+ * guard for the loader-facing surface, which no behavior spec reaches.
  */
 
 import { Context } from '@deepseek-ai/cordis'
@@ -76,23 +77,24 @@ async function mount(config: PluginConfigInput = {}): Promise<{ tools: string[];
 
 describe('dsh-worktree plugin entry', () => {
   it('publishes the worktree service under its declared name', async () => {
-    const tools: string[] = []
     const ctx = new Context()
-    await provideSibling(ctx, { tools: toolRegistry(tools) })
     await ctx.plugin(plugin, { startSessionRoute: false }).await()
     expect(ctx.get('worktree')).toBeDefined()
   })
 
-  it('registers the three worktree tools under their default names', async () => {
+  it('registers no model-facing tools', async () => {
+    // Creating and removing a checkout are user actions; the model gets no tool
+    // for either. Archiving a session is the one automatic removal path.
     const { tools } = await mount()
-    expect(tools.sort()).toEqual(['worktree_create', 'worktree_list', 'worktree_remove'])
+    expect(tools).toEqual([])
   })
 
-  it('honors configured tool names', async () => {
-    const { tools } = await mount({
-      createToolName: 'wt_new', listToolName: 'wt_list', removeToolName: 'wt_rm',
-    })
-    expect(tools.sort()).toEqual(['wt_list', 'wt_new', 'wt_rm'])
+  it('leaves a tool registry alone even when one is present', async () => {
+    const tools: string[] = []
+    const ctx = new Context()
+    await provideSibling(ctx, { tools: toolRegistry(tools) })
+    await ctx.plugin(plugin, {}).await()
+    expect(tools).toEqual([])
   })
 
   it('mounts the browser route by default and omits it when disabled', async () => {
@@ -101,37 +103,30 @@ describe('dsh-worktree plugin entry', () => {
   })
 
   it('removes every registration when its fiber unloads', async () => {
-    const tools: string[] = []
     const routes: string[] = []
     const ctx = new Context()
     await provideSibling(ctx, {
-      tools: toolRegistry(tools),
       webServer: webServer(routes),
       workspaceRegistry: {},
       agents: {},
     })
     const fiber = await ctx.plugin(plugin, {}).await()
-    expect(tools).toHaveLength(3)
     expect(routes).toHaveLength(1)
     await fiber.dispose()
-    // The registries record disposals through the returned disposers; this
-    // asserts the plugin itself owns no registrations outside them.
     expect(ctx.get('worktree')).toBeUndefined()
   })
 
   it('reports a missing webserver instead of failing to load', async () => {
-    const tools: string[] = []
     const ctx = new Context()
-    await provideSibling(ctx, { tools: toolRegistry(tools) })
-    // No webServer: the host tools must still mount.
+    // No webServer: the service must still mount.
     await expect(ctx.plugin(plugin, {}).await()).resolves.toBeDefined()
-    expect(tools).toHaveLength(3)
+    expect(ctx.get('worktree')).toBeDefined()
   })
 
   it('mounts no route when a service the route reads is missing', async () => {
     const routes: string[] = []
     const ctx = new Context()
-    await provideSibling(ctx, { tools: toolRegistry([]), webServer: webServer(routes) })
+    await provideSibling(ctx, { webServer: webServer(routes) })
     // workspaceRegistry and agents are absent: the route reads both, so it must
     // wait rather than mount and fail on the first request that needs them.
     await ctx.plugin(plugin, {}).await()
@@ -140,7 +135,6 @@ describe('dsh-worktree plugin entry', () => {
 
   it('refuses an agent directory that could escape the workspace at load', async () => {
     const ctx = new Context()
-    await provideSibling(ctx, { tools: toolRegistry([]) })
     // The checkout path is derived per creation, so a directory naming a parent
     // would put checkouts outside every workspace; it fails at load instead.
     await expect(ctx.plugin(plugin, { agentsDirectory: '../escape' }).await())
@@ -149,7 +143,7 @@ describe('dsh-worktree plugin entry', () => {
 
   it('re-installs the live policy when the settings document moves', async () => {
     const ctx = new Context()
-    await provideSibling(ctx, { tools: toolRegistry([]), settings: {} })
+    await provideSibling(ctx, { settings: {} })
     await ctx.plugin(plugin, { nestedRepositories: 'all', nestedScanDepth: 5 }).await()
     const service = ctx.get('worktree')
     if (service === undefined) throw new Error('the plugin provided no worktree service')

@@ -1,17 +1,23 @@
 /**
  * dsh-worktree — Git worktree isolation for DeepSeek Harness.
  *
- * Provides the `worktree` service and the model-facing tools over it. The
- * service is the seam: a Host consumer (the session-create path, or the GUI's
- * new-session flow) creates a checkout through it and starts a session whose
- * `meta.cwd` is the returned path, which is what makes the checkout a separate
- * project with its own file sandbox and shell working directory.
+ * Provides the `worktree` service and the browser route over it. The service is
+ * the seam: a Host consumer (the session-create path, or the GUI's new-session
+ * flow) creates a checkout through it and starts a session whose `meta.cwd` is
+ * the returned path, which is what makes the checkout a separate project with
+ * its own file sandbox and shell working directory.
+ *
+ * The plugin registers NO model-facing tools. Creating, listing, and removing a
+ * checkout are user actions: the browser half owns them, and the one cleanup
+ * that must follow from another surface — archiving a session — is wired to the
+ * Workspace registry's archive notification instead of being offered to the
+ * model (see {@link installArchiveCleanup}).
  *
  * The policy fields are `volatile`: the settings page edits them while the
  * plugin runs, and the entry's document update is what re-installs them on the
- * service. The fields that shape REGISTRATION — the tool names and whether the
- * route mounts — stay ordinary config, because changing one has to re-run
- * `apply` rather than reconfigure a running service.
+ * service. The fields that shape REGISTRATION — whether the route mounts, and
+ * whether archiving cleans up — stay ordinary config, because changing one has
+ * to re-run `apply` rather than reconfigure a running service.
  * @module @guowenzhang/dsh-worktree
  */
 
@@ -22,7 +28,7 @@ import {
   DEFAULT_WORKTREE_LAYOUT, SETTINGS_NAMESPACE, type NestedRepositoryPolicy, type WorktreeLayout,
 } from './policy.ts'
 import { WorktreeService, type WorktreeServiceOptions } from './service.ts'
-import { registerTools } from './tools.ts'
+import { installArchiveCleanup } from './archive-cleanup.ts'
 import { registerRoute } from './route.ts'
 // Pulls the `ctx.worktree` service declaration into this program's type face.
 import type {} from './types.ts'
@@ -35,7 +41,9 @@ import type {} from '@deepseek-ai/dsh-agent'
 // Pulls the `ctx.webServer` declaration.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 
-export type { WorktreeInfo, CreatedWorktree, CreateWorktreeRequest, RemoveWorktreeRequest } from './service.ts'
+export type {
+  WorktreeInfo, CreatedWorktree, CreateWorktreeRequest, RemoveWorktreeRequest, LinkedCheckout,
+} from './service.ts'
 export { WorktreeService } from './service.ts'
 
 /** Plugin name used by the loader. */
@@ -43,16 +51,9 @@ export const name = 'worktree'
 
 export { SETTINGS_NAMESPACE } from './policy.ts'
 
-/**
- * Declared service edges. The tool registry is a hard dependency — the tools
- * cannot register without it. The route's dependencies (`webServer`,
- * `workspaceRegistry`, and `agents`) are declared by `ctx.inject` inside
- * {@link registerRoute} instead, so a deployment without one of them still gets
- * the tools rather than failing to activate. The settings service is asked for
- * through `ctx.inject` too: a deployment that runs no settings document keeps
- * the tools and simply cannot edit this policy while the process runs.
- */
-export const inject = ['tools']
+// Every service this plugin consumes (the tool registry excluded — the plugin
+// registers no tools) is asked for through `ctx.inject`, so a deployment that
+// lacks one still mounts the service instead of failing to activate.
 
 /** Deployment configuration for the worktree capability. */
 export interface Config {
@@ -85,18 +86,21 @@ export interface Config {
   nestedScanDepth: Volatile<number>
   /** Bound in milliseconds on each git invocation. */
   gitTimeoutMs: Volatile<number>
-  /** Model-facing tool name for creating a worktree. */
-  createToolName: string | undefined
-  /** Model-facing tool name for listing worktrees. */
-  listToolName: string | undefined
-  /** Model-facing tool name for removing a worktree. */
-  removeToolName: string | undefined
   /**
    * Whether to mount `/worktree/api`, the route the browser half uses to start
-   * a session inside a new checkout. A deployment that mounts only the host
-   * tools turns it off.
+   * a session inside a new checkout.
    */
   startSessionRoute: boolean | undefined
+  /**
+   * Whether archiving a session removes the linked checkout it runs in.
+   *
+   * A checkout removed this way is gone with its branch's working tree; the
+   * commit history it shared with the main checkout is untouched. A checkout
+   * holding uncommitted work is never removed — the refusal is logged and the
+   * checkout survives, which is the same rule {@link WorktreeService.remove}
+   * applies to an explicit request.
+   */
+  removeOnSessionArchive: boolean | undefined
 }
 
 /**
@@ -115,10 +119,8 @@ export const Config = z.object({
   nestedRepositories: z.union(['none', 'submodules', 'all']).default(DEFAULT_NESTED_REPOSITORIES).volatile(),
   nestedScanDepth: z.number().step(1).min(1).default(DEFAULT_NESTED_SCAN_DEPTH).volatile(),
   gitTimeoutMs: z.number().min(0).default(DEFAULT_GIT_TIMEOUT_MS).volatile(),
-  createToolName: z.string(),
-  listToolName: z.string(),
-  removeToolName: z.string(),
   startSessionRoute: z.boolean(),
+  removeOnSessionArchive: z.boolean().default(true),
 })
 
 /**
@@ -137,7 +139,7 @@ function liveOptions(config: Config): WorktreeServiceOptions {
 }
 
 /**
- * Register the worktree service and its model-facing tools.
+ * Register the worktree service and the surfaces over it.
  * @param ctx - the Host plugin context.
  * @param config - the deployment's worktree policy.
  */
@@ -153,10 +155,6 @@ export function apply(ctx: Context, config: Config): void {
       service.reconfigure(liveOptions(config))
     }), 'dsh-worktree: live policy')
   })
-  registerTools(ctx, service, {
-    create: config.createToolName ?? 'worktree_create',
-    list: config.listToolName ?? 'worktree_list',
-    remove: config.removeToolName ?? 'worktree_remove',
-  })
+  if (config.removeOnSessionArchive ?? true) installArchiveCleanup(ctx, service)
   if (config.startSessionRoute ?? true) registerRoute(ctx, service)
 }

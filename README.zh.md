@@ -67,15 +67,27 @@ npx @deepseek-ai/dsh plugin --profile web add @guowenzhang/dsh-worktree
 | `sibling` | 仓库同级 | `<仓库名>-wt-<分支>`，建在仓库旁边，不进工作区树 |
 | `home` | 用户目录 | `~/.agents/worktree/<分支>`，整台机器共用 |
 
-### 让模型操作 checkout
+### 归档会话时删除 checkout
 
-三个模型工具消费同一个服务，都不开会话——模型建出 checkout，由产品自己的新会话流程把会话放进去。`worktree_create` 建一个 linked checkout 并返回它的路径；`worktree_list` 列出该仓库的 checkout，主 checkout 在最前；`worktree_remove` 删除其中一个，拒绝主 checkout，也拒绝任何带未提交改动的 checkout，除非显式传 `force`。
+本插件**不注册任何模型工具**：建、列、删 checkout 都是用户操作，界面负责全部三件。
 
-```js
-// 一个会话里
-worktree_create({ branch: 'fix/123' })
-worktree_list()
-worktree_remove({ path: '/abs/path' })
+唯一的自动删除跟着会话生命周期走。**归档一个会话时，会话当初创建的 linked checkout 会被删掉**——归档本身就代表这条工作线结束了。删除由 Workspace registry 自己的归档通知触发，发生在归档落盘之后，绝不拦截、也不拖慢归档本身。
+
+**归档和删除各自通报。** 归档照旧弹它自己的「会话已归档」提示；checkout 的清理随后另弹一条——「worktree 已删除」，或者清理被拒时「已归档，但 worktree 保留」并带上原因。两条互相独立：第二条只报告 Host 已经记下的结果，它慢了、失败了、甚至没渲染，都不会拖慢或影响归档。
+
+- **带未提交改动的 checkout 绝不删除。** 删除被拒，checkout 原样留在那里，第二条提示会如实说明——归档结束的是会话，不是丢弃工作的授权。
+- **多个会话共用的 checkout 不会被误删。** 只有工作区所属的那个会话被归档时才删，所以归档子代理不会删掉父会话还在用的工作区。
+- **只删 linked checkout。** 在仓库自己的工作树里归档会话，那个目录不动；主 worktree 永远不是删除目标。
+- **手动删工作区不会有任何提示。** 注销一个工作区记录从不删除文件，所以那种情况不弹通知。
+- **分支不会跟着消失。** 删 checkout 从不删分支，包括为嵌套仓库建的那些。
+
+在插件行上写 `removeOnSessionArchive: false` 可以整体关掉，回到手动删除。
+
+```yaml
+- id: worktree
+  name: '@guowenzhang/dsh-worktree'
+  config:
+    removeOnSessionArchive: false
 ```
 
 ### 分支名
@@ -84,12 +96,12 @@ worktree_remove({ path: '/abs/path' })
 
 ## 注意事项
 
-- **不自动清理。** 会话结束后 worktree 不会自动删除：未提交的工作绝不该被静默丢弃，删除只能显式发起。
+- **清理跟着归档走，不跟着进程结束走。** 会话被归档时删 worktree，宿主停止时不动它：关掉会话后 checkout 还在，你随时可以继续在里面干活。
 - **删除不检查 live 会话。** 删除一个仍有会话在跑的 checkout 目前不做拦截。
 - **6 位随机后缀会撞名。** 同一个 base 的两个 checkout 取自同一个空间，约百万分之一会撞上；那时 `git worktree add` 会直接报错，再勾一次即可。
 - **默认位置会出现在 `git status` 里。** `agents` 把 checkout 放在 `<工作区>/.agents/worktree/` 下，是主 checkout 里的未跟踪目录。把 `.agents/worktree/` 加进 `.gitignore` / `.git/info/exclude`，或改用 仓库同级 / 用户目录。
 - **「用户目录」是整机共享的位置。** `~/.agents/worktree/<分支>` 不属于任何工作区：几个仓库的 checkout 会并排放在一起；它落在某个仓库里时，那里也需要你自己加 `.gitignore`。
-- **不能从界面给分支起名。** 分支在工作区标题里可见；需要指定名字就用 `worktree_create` 的 `branch`。
+- **不能给分支起名。** 分支在工作区标题和 checkout 目录里可见；既没有地方选，也没有工具可传。
 - **子模块是 detached HEAD，这是设计。** 这是 gitlink 的语义，不是缺陷；要“带分支的子仓库”就用独立嵌套仓库。
 - **只有真正的 `.git` 目录才算嵌套仓库。** 一个子目录如果自己是别的仓库的 linked worktree（`.git` 是文件），或者是个子模块，都不会被镜像成新分支。
 - **本地路径的子模块需要 Git 的 `file` 传输许可。** `protocol.file.allow` 是 Git 自己的安全开关，本插件**不覆盖**它：仓库的 `.gitmodules` 指向本地路径时，得由 git 配置（全局或仓库级）放行，否则创建会带着 Git 的原话失败并整体回滚。子模块用 https/ssh 时不受影响。

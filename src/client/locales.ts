@@ -14,6 +14,9 @@ export const zh = {
   'seat.hint': '创建当前工作区的一个独立 Git worktree，并在其中开启这个会话。',
   'seat.creating': '创建中…',
   'seat.applied': '已在该 worktree 中运行：{branch}；这个选择不能再改',
+  'seat.skipped': '有 {count} 个子仓库没有带过来：{list}',
+  'seat.skippedNoCommits': '还没有任何提交，没有可检出的内容',
+  'seat.skippedCreateFailed': '创建失败：{reason}',
   'branch.hint': '新分支从哪个本地分支开始',
   'branch.head': 'HEAD',
   'settings.nav': 'Worktree',
@@ -45,6 +48,8 @@ export const zh = {
   'settings.saving': '保存中…',
   'settings.saveFailed': '本部署没有接受这些值，已保留供你修改。',
   'settings.invalidNumber': '请填数字；留空表示使用默认值。',
+  'checkout.removed': '已归档，worktree 已删除：{path}',
+  'checkout.kept': '已归档，但 worktree 保留（{reason}）：{path}',
 } as const
 
 /** English copy. */
@@ -53,6 +58,9 @@ export const en: Record<keyof typeof zh, string> = {
   'seat.hint': 'Create an isolated Git worktree of this workspace and start this session inside it.',
   'seat.creating': 'Creating…',
   'seat.applied': 'Running in this worktree: {branch}; the choice can no longer change',
+  'seat.skipped': 'Left out {count} nested repositories: {list}',
+  'seat.skippedNoCommits': 'no commits yet, so there is nothing to check out',
+  'seat.skippedCreateFailed': 'could not be created: {reason}',
   'branch.hint': 'Local branch the new branch starts from',
   'branch.head': 'HEAD',
   'settings.nav': 'Worktree',
@@ -84,6 +92,8 @@ export const en: Record<keyof typeof zh, string> = {
   'settings.saving': 'Saving…',
   'settings.saveFailed': 'The deployment did not accept these values; they were left for you to correct.',
   'settings.invalidNumber': 'Enter a number, or leave blank to use the default.',
+  'checkout.removed': 'Archived, and the worktree was deleted: {path}',
+  'checkout.kept': 'Archived, but the worktree was kept ({reason}): {path}',
 }
 
 /** One key of this plugin's dictionary. */

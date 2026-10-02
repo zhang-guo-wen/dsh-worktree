@@ -53,6 +53,7 @@ describe('worktree seat', () => {
       checkoutBranch: '',
       isolated: false,
       error: null,
+      skipped: [],
     })
   })
 
@@ -189,6 +190,33 @@ describe('worktree seat', () => {
     expect(seat.store.getSnapshot()).toMatchObject({ enabled: false, creating: false, error: null })
   })
 
+  it('reports the nested repositories a successful start left out', async () => {
+    stubRoute(method => method === 'start'
+      ? {
+        ok: true,
+        body: {
+          sessionId: 's-1',
+          worktree: {
+            path: '/repo-wt',
+            nestedSkipped: [{ relative: 'empty-child', code: 'no-commits', reason: 'Needed a single revision' }],
+          },
+          workspaceId: 'w-1',
+        },
+      }
+      : { ok: true, body: { worktrees: [checkout('/repo', 'dev', true)] } })
+    const seat = new WorktreeSeatController()
+    await seat.load('/repo')
+    seat.setEnabled(true)
+
+    // The start succeeded, so a repository it could not mirror is a fact about
+    // the new Session rather than a reason to keep the control unspent.
+    expect(await seat.start(() => {})).toBe('s-1')
+    expect(seat.store.getSnapshot().skipped).toEqual([
+      { relative: 'empty-child', code: 'no-commits', reason: 'Needed a single revision' },
+    ])
+    expect(seat.store.getSnapshot().error).toBeNull()
+  })
+
   it('reports a refused start and clears the choice so it cannot silently re-fire', async () => {
     stubRoute(method => method === 'start'
       ? { ok: false, body: { error: { message: 'branch already exists' } } }
@@ -239,15 +267,27 @@ describe('worktree seat', () => {
 
   it('forgets a start when the screen moves to another Session', async () => {
     stubRoute(method => method === 'start'
-      ? { ok: true, body: { sessionId: 's-1', worktree: { path: '/repo-wt' }, workspaceId: 'w-1' } }
+      ? {
+        ok: true,
+        body: {
+          sessionId: 's-1',
+          worktree: {
+            path: '/repo-wt',
+            nestedSkipped: [{ relative: 'empty-child', code: 'no-commits', reason: 'Needed a single revision' }],
+          },
+          workspaceId: 'w-1',
+        },
+      }
       : { ok: true, body: { worktrees: [] } })
     const seat = new WorktreeSeatController()
     await seat.load('/repo')
     seat.setEnabled(true)
     await seat.start(() => { throw new Error('sessions.retain: unknown session s-1') })
+    expect(seat.store.getSnapshot().skipped).toHaveLength(1)
 
     seat.resetStart()
-    expect(seat.store.getSnapshot().started).toBeNull()
+    // Another Session's arrival must not inherit the previous one's report.
+    expect(seat.store.getSnapshot()).toMatchObject({ started: null, skipped: [] })
   })
 
   it('refuses to start without a probed directory', async () => {

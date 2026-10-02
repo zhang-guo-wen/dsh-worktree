@@ -88,6 +88,25 @@ export interface NestedWorktree {
   readonly repositoryRoot: string
 }
 
+/** Why one nested repository was left out of a created checkout. */
+export type NestedSkipCode =
+  /** The repository has no commit, so it has no HEAD a new branch could start from. */
+  | 'no-commits'
+  /** Git refused to create the checkout for another reason, stated in `reason`. */
+  | 'create-failed'
+
+/** A nested repository a creation could not bring over. */
+export interface SkippedNestedRepository {
+  /** Main repository root of the nested repository. */
+  readonly repositoryRoot: string
+  /** Its path relative to the parent repository root, with `/` separators. */
+  readonly relative: string
+  /** Machine-readable reason, so a caller can state it in its own words. */
+  readonly code: NestedSkipCode
+  /** Git's own diagnostic, kept for the log and for a caller with no copy of its own. */
+  readonly reason: string
+}
+
 /** A completed worktree creation. */
 export interface CreatedWorktree extends WorktreeInfo {
   /** Main repository root the checkout was created from. */
@@ -98,6 +117,14 @@ export interface CreatedWorktree extends WorktreeInfo {
    * it has submodules but the policy materialized none of them.
    */
   readonly nested: readonly NestedWorktree[]
+  /**
+   * Nested repositories this creation left out, each with the reason it was
+   * skipped, outermost first. A repository Git will not give a branch to is a
+   * fact about that repository — a repository with no commit at all is the
+   * common one — so it costs the nested checkout, never the checkout the
+   * caller asked for. Empty when every nested repository was attached.
+   */
+  readonly nestedSkipped: readonly SkippedNestedRepository[]
 }
 
 /** Inputs accepted when creating a worktree. */
@@ -113,6 +140,16 @@ export interface CreateWorktreeRequest {
    * local branch among these is also recorded in the default branch name.
    */
   readonly base?: string
+}
+
+/** One linked checkout, as recognized by {@link WorktreeService.inspectLinkedCheckout}. */
+export interface LinkedCheckout {
+  /** Main repository root that owns the checkout. */
+  readonly repositoryRoot: string
+  /** The checkout's canonical path. */
+  readonly path: string
+  /** The repository's main worktree, which is the only checkout never removed. */
+  readonly main: string
 }
 
 /** Inputs accepted when removing a worktree. */
@@ -333,10 +370,17 @@ export class WorktreeService {
     // Nested repositories come over only once the parent's directory exists:
     // every one of their checkouts is a directory inside it.
     const nested: NestedWorktree[] = []
+    const nestedSkipped: SkippedNestedRepository[] = []
     try {
       if (this.nestedRepositories !== 'none') await this.attachSubmodules(checkout)
-      if (this.nestedRepositories === 'all') await this.attachRepositories(repositoryRoot, checkout, nested)
+      if (this.nestedRepositories === 'all') {
+        await this.attachRepositories(repositoryRoot, checkout, nested, nestedSkipped)
+      }
     } catch (error: unknown) {
+      // Only the submodule step still throws: a gitlink the parent records is
+      // part of the tree the caller asked for, so an incomplete materialization
+      // discards the checkout rather than reporting a tree that is missing a
+      // directory Git says belongs in it.
       await this.rollback(repositoryRoot, checkout, nested, error)
     }
     return {
@@ -346,6 +390,7 @@ export class WorktreeService {
       main: false,
       repositoryRoot,
       nested,
+      nestedSkipped,
     }
   }
 
@@ -413,6 +458,36 @@ export class WorktreeService {
     }
     await this.removeCheckout(repositoryRoot, target.path, request.force)
     return target
+  }
+
+  /**
+   * Describe `path` when it is a linked checkout of a Git repository.
+   *
+   * This is the only way to tell a checkout apart from a repository's own
+   * working tree, and callers outside git need the distinction: the identical
+   * directory shape holds for both, and removing the main worktree would delete
+   * the repository. The answer comes from the repository's own listing — the
+   * same listing {@link remove} validates against — so a path that is merely
+   * *inside* a checkout, or a directory that only looks like one, is not a
+   * linked checkout.
+   * @param path - absolute directory to describe.
+   * @returns the repository root, the checkout's canonical path, and the main
+   * worktree's path; `undefined` when the path is not a linked checkout.
+   * @throws {Error} when the path is not absolute or git itself fails.
+   */
+  async inspectLinkedCheckout(path: string): Promise<LinkedCheckout | undefined> {
+    assertAbsolutePath(path, 'path')
+    const records = await this.list(path)
+    const requested = await canonical(path)
+    const record = records.find(entry => samePath(entry.path, requested))
+    if (record === undefined || record.main) return undefined
+    const main = records.find(entry => entry.main)
+    if (main === undefined) return undefined
+    // `--git-common-dir` names the repository's shared `.git` directory for a
+    // linked checkout; the main worktree is the directory holding it.
+    const common = (await this.git(path, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim()
+    const repositoryRoot = await canonical(dirname(common))
+    return { repositoryRoot, path: record.path, main: main.path }
   }
 
   /**
@@ -493,23 +568,59 @@ export class WorktreeService {
    * path mirrors the nested repository's place under the original repository
    * root, which puts it inside the new checkout where the original directory
    * was — the path is what makes the copied tree recognizable.
+   *
+   * One nested repository that cannot take a branch is left out and named
+   * instead of failing the call: the caller asked for a checkout, and a
+   * repository with nothing to check out is a normal state of the tree rather
+   * than a reason to hand back no checkout at all. Every skip is reported, so
+   * the caller can tell a complete mirror from a partial one.
    * @param repositoryRoot - repository root the nested repositories are found under.
    * @param checkout - the parent checkout the nested ones are created inside.
    * @param created - collects each nested creation, in creation order.
+   * @param skipped - collects each repository left out, in the same order.
    */
   private async attachRepositories(
     repositoryRoot: string,
     checkout: string,
     created: NestedWorktree[],
+    skipped: SkippedNestedRepository[],
   ): Promise<void> {
     for (const nested of await findNestedRepositories(repositoryRoot, this.nestedScanDepth)) {
       const target = join(checkout, ...nested.relative.split('/'))
-      const base = await this.currentBranch(nested.root)
+      if (!await this.hasCommit(nested.root)) {
+        // An unborn HEAD has no commit for a branch to start from, and a
+        // checkout of it would hold nothing: there is no tree to mirror.
+        skipped.push({
+          repositoryRoot: nested.root, relative: nested.relative, code: 'no-commits',
+          reason: 'the repository has no commit, so it has no HEAD to start a branch from',
+        })
+        continue
+      }
+      let base: string
+      try {
+        base = await this.currentBranch(nested.root)
+      } catch (error: unknown) {
+        skipped.push({
+          repositoryRoot: nested.root, relative: nested.relative, code: 'create-failed', reason: reason(error),
+        })
+        continue
+      }
       const branch = defaultBranchName(base === DETACHED_HEAD ? undefined : base)
-      await mkdir(dirname(target), { recursive: true })
-      await this.git(nested.root, [
-        'worktree', 'add', '-b', branch, target, ...base === DETACHED_HEAD ? [] : [base],
-      ])
+      try {
+        await mkdir(dirname(target), { recursive: true })
+        await this.git(nested.root, [
+          'worktree', 'add', '-b', branch, target, ...base === DETACHED_HEAD ? [] : [base],
+        ])
+      } catch (error: unknown) {
+        // Git may have written the administrative entry before failing on the
+        // checkout, and a stale entry would surface as a prunable record in the
+        // nested repository's own listing.
+        await this.pruneQuietly(nested.root)
+        skipped.push({
+          repositoryRoot: nested.root, relative: nested.relative, code: 'create-failed', reason: reason(error),
+        })
+        continue
+      }
       created.push({ path: target, branch, repositoryRoot: nested.root })
     }
   }
@@ -524,14 +635,37 @@ export class WorktreeService {
   }
 
   /**
-   * Undo a creation whose nested repositories could not all be attached.
+   * Whether one repository has a commit, which is what a new branch needs.
    *
-   * The caller asked for the whole tree or nothing, so every checkout this call
-   * created is removed — nested ones first, because each was created inside the
-   * one before it. A cleanup that itself fails is reported beside the original
-   * failure rather than replacing it: a directory left behind is a fact the
-   * caller has to act on, and the reason the creation failed is still the
-   * reason.
+   * Read through `rev-parse --verify HEAD` rather than the branch name: an
+   * unborn HEAD still names the branch Git would use, so the branch name alone
+   * cannot tell a repository with commits from one without.
+   * @param repositoryRoot - repository root to read.
+   * @returns true when HEAD resolves to a commit.
+   */
+  private async hasCommit(repositoryRoot: string): Promise<boolean> {
+    try {
+      await this.git(repositoryRoot, ['rev-parse', '--verify', 'HEAD'])
+      return true
+    } catch (error: unknown) {
+      // A repository without a commit is this predicate's answer, not a
+      // failure: the skip it produces carries Git's own diagnostic.
+      void error
+      return false
+    }
+  }
+
+  /**
+   * Undo a creation whose submodules could not be materialized.
+   *
+   * The caller asked for the tree the parent records, so an incomplete
+   * materialization removes every checkout this call created — nested ones
+   * first, because each was created inside the one before it. An independent
+   * nested repository that cannot take a branch is deliberately not in this
+   * class: it is reported as skipped instead, and its creation survives.
+   * A cleanup that itself fails is reported beside the original failure rather
+   * than replacing it: a directory left behind is a fact the caller has to act
+   * on, and the reason the creation failed is still the reason.
    * @param repositoryRoot - main repository root of the caller's checkout.
    * @param checkout - the parent checkout to remove.
    * @param nested - the nested creations to remove, in creation order.

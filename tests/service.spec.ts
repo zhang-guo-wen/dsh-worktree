@@ -12,7 +12,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -269,5 +269,46 @@ describe('WorktreeService against real git', () => {
     const createdWorktree = await service.create({ cwd: root, base: head })
     expect(createdWorktree.branch).toMatch(/^worktree-\d{6}$/)
     expect(git(createdWorktree.path, ['rev-parse', 'HEAD']).trim()).toBe(head)
+  })
+})
+
+describe('linked-checkout inspection', () => {
+  it('describes a linked checkout with its repository root and main worktree', async () => {
+    const { root } = repository()
+    const service = new WorktreeService()
+    const createdWorktree = await service.create({ cwd: root, branch: 'inspect' })
+
+    const checkout = await service.inspectLinkedCheckout(createdWorktree.path)
+    // Git reports checkout paths with `/` even on Windows; `resolve` folds both
+    // spellings to the host's own before the comparison.
+    expect(resolve(checkout?.repositoryRoot ?? '')).toBe(resolve(root))
+    expect(resolve(checkout?.path ?? '')).toBe(resolve(createdWorktree.path))
+    expect(resolve(checkout?.main ?? '')).toBe(resolve(root))
+    // The paths are distinct checkouts of one repository, which is the fact
+    // post-archive cleanup keys on before it removes anything.
+    expect(resolve(checkout?.path ?? '')).not.toBe(resolve(checkout?.main ?? ''))
+  })
+
+  it('treats a repository’s own working tree as no linked checkout', async () => {
+    const { root } = repository()
+    const service = new WorktreeService()
+    // The main worktree is refused: removing it would delete the repository.
+    expect(await service.inspectLinkedCheckout(root)).toBeUndefined()
+  })
+
+  it('treats a directory inside a checkout as no linked checkout', async () => {
+    const { root } = repository()
+    const service = new WorktreeService()
+    const createdWorktree = await service.create({ cwd: root, branch: 'inside' })
+    mkdirSync(join(createdWorktree.path, 'nested'), { recursive: true })
+
+    expect(await service.inspectLinkedCheckout(join(createdWorktree.path, 'nested'))).toBeUndefined()
+  })
+
+  it('reports nothing for a directory that is not a repository', async () => {
+    const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-worktree-plain-')))
+    created.push(scratch)
+    const service = new WorktreeService()
+    await expect(service.inspectLinkedCheckout(scratch)).rejects.toThrow()
   })
 })

@@ -23,16 +23,29 @@ export interface WorktreeEntry {
   readonly main: boolean
 }
 
+/** A nested repository a creation left out, as the route reports it. */
+export interface SkippedNestedEntry {
+  /** Its path relative to the parent repository root, with `/` separators. */
+  readonly relative: string
+  /** Machine-readable reason, so this half can state it in the current locale. */
+  readonly code: 'no-commits' | 'create-failed'
+  /** Git's own diagnostic, for a reason this half has no copy for. */
+  readonly reason: string
+}
+
 /** A successful `start` result. */
 export interface StartResult {
   /**
    * The checkout that was created, with the nested checkouts that came with it
    * (a repository's submodules, and the repositories nested inside it when the
-   * deployment materializes them).
+   * deployment materializes them). A nested repository that could not take a
+   * branch is not an error: it is named in `nestedSkipped` and the start
+   * succeeds, because the caller asked for a checkout and got one.
    */
   readonly worktree: WorktreeEntry & {
     readonly repositoryRoot: string
     readonly nested?: readonly WorktreeEntry[]
+    readonly nestedSkipped?: readonly SkippedNestedEntry[]
   }
   /** Project registered for the checkout. */
   readonly workspaceId: string
@@ -63,6 +76,17 @@ export interface GitCheckResult {
   readonly version: string
 }
 
+/**
+ * What the archive flow did to one checkout whose Workspace row is gone.
+ * `unknown` means this plugin never touched that path — the row was deleted by
+ * hand, and its directory was left where it was.
+ */
+export interface CheckoutProbeResult {
+  readonly outcome: 'removed' | 'kept' | 'unknown'
+  /** The Host's refusal text, present for a `kept` outcome. */
+  readonly reason?: string
+}
+
 /** The result of one route call. */
 export type RouteResult<T> =
   | { readonly ok: true; readonly value: T }
@@ -75,7 +99,7 @@ export type RouteResult<T> =
  * @returns the parsed value, or the Host's refusal text.
  */
 export async function request<T>(
-  method: 'start' | 'list' | 'branches' | 'init' | 'check',
+  method: 'start' | 'list' | 'branches' | 'init' | 'check' | 'checkout',
   body: Record<string, unknown>,
 ): Promise<RouteResult<T>> {
   let response: Response

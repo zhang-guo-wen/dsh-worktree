@@ -69,15 +69,27 @@ The footer holds `[恢复默认] [保存]` together, and a save takes effect wit
 | `sibling` | 仓库同级 | `<repo>-wt-<branch>`, beside the repository and outside the workspace tree |
 | `home` | 用户目录 | `~/.agents/worktree/<branch>`, shared by every workspace on the machine |
 
-### Work with checkouts from the model
+### Archiving a session removes its checkout
 
-Three model tools consume the same service, and none of them starts a session — the model creates the checkout, and the product's own new-session flow puts a session inside it. `worktree_create` creates a linked checkout and returns its path; `worktree_list` lists the repository's checkouts, main checkout first; `worktree_remove` removes one, refusing the main checkout and refusing any checkout with uncommitted work unless `force` is passed.
+The plugin registers **no model-facing tools**: creating, listing and removing a checkout are user actions, and the interface owns all three.
 
-```js
-// inside a session
-worktree_create({ branch: 'fix/123' })
-worktree_list()
-worktree_remove({ path: '/abs/path' })
+The one automatic removal is tied to the session lifecycle. Archiving a session removes the linked checkout it was created in, because the archive is what says that line of work is over. The removal runs from the Workspace registry's own archive notification, after the archive is durable; it never intercepts or blocks the archive itself.
+
+**The archive and the removal report themselves separately.** Archiving shows the usual "Session archived" notice; the checkout cleanup follows with a notice of its own — "the worktree was deleted" or, when the removal was refused, "archived, but the worktree was kept" with the reason. The two are independent: the second one only reports an outcome the Host already recorded, so a slow, failing, or missing report never delays or breaks the archive.
+
+- **A checkout holding uncommitted work is never removed.** The removal is refused, the checkout stays exactly where it is, and the second notice says so — archiving ends a session, it does not authorize discarding work.
+- **A checkout shared by more than one session survives.** It goes only when the session that owns the workspace is archived, so archiving a subagent never deletes the workspace its parent is still working in.
+- **Only a linked checkout is ever removed.** A session archived inside the repository's own working tree keeps that directory; the main worktree is never a removal target.
+- **Deleting a workspace by hand reports nothing.** Removing a Workspace registration never deletes files, so that case gets no notice at all.
+- **The branch survives.** Removing a checkout never removes a branch, not even the ones created for nested repositories.
+
+Set `removeOnSessionArchive: false` on the plugin row to turn the whole behavior off and go back to manual removal.
+
+```yaml
+- id: worktree
+  name: '@guowenzhang/dsh-worktree'
+  config:
+    removeOnSessionArchive: false
 ```
 
 ### Branch names
@@ -86,12 +98,12 @@ The interface never takes a branch name; the Host derives one. It is the chosen 
 
 ## Notes and caveats
 
-- **Nothing is cleaned up automatically.** A worktree is not deleted when its session ends: uncommitted work must never be discarded silently, so removal is always explicit.
+- **Cleanup follows the archive, not the end of the process.** A worktree is removed when its session is archived, not when the host stops: closing a session leaves the checkout for you to keep working in.
 - **Removal does not check for live sessions.** Deleting a checkout that still has a session running in it is not blocked.
 - **A 6-digit suffix can collide.** Two checkouts of one base draw from the same space, about one collision in a million; `git worktree add` then fails with its own message, and checking again retries.
 - **The default location shows up in `git status`.** `agents` puts the checkout under `<workspace>/.agents/worktree/`, an untracked directory inside the main checkout. Add `.agents/worktree/` to `.gitignore` or `.git/info/exclude`, or choose 仓库同级 / 用户目录.
 - **用户目录 is shared machine-wide.** `~/.agents/worktree/<branch>` belongs to no workspace: checkouts of several repositories sit side by side there, and that directory needs its own `.gitignore` entry when it lands inside a repository.
-- **You cannot name the branch from the interface.** The branch is visible in the workspace title; pass `branch` to `worktree_create` when the name matters.
+- **You cannot name the branch.** The branch is visible in the workspace title and in the checkout directory; there is no way to choose it, and no tool to pass one to.
 - **Submodules are detached HEAD by design.** That is what a gitlink means, not a defect; a child repository that needs a branch is an independent nested repository.
 - **Only a real `.git` directory counts as a nested repository.** A subdirectory that is itself another repository's linked worktree (`.git` is a file), or a submodule, is not mirrored onto a new branch.
 - **Local-path submodules need Git's `file` transport permission.** `protocol.file.allow` is Git's own safety switch and this plugin does not override it: a repository whose `.gitmodules` points at a local path needs the permission granted in git configuration (global or repository-level), or creation fails with Git's own message and rolls back. Submodules over https/ssh are unaffected.

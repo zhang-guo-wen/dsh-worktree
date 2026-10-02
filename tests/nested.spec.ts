@@ -150,6 +150,7 @@ describe('nested repositories in a created checkout', () => {
     })
 
     expect(createdWorktree.nested).toHaveLength(1)
+    expect(createdWorktree.nestedSkipped).toEqual([])
     const [nested] = createdWorktree.nested
     expect(nested?.repositoryRoot).toBe(child)
     expect(nested?.path).toBe(join(createdWorktree.path, 'child-plain'))
@@ -184,23 +185,33 @@ describe('nested repositories in a created checkout', () => {
     expect(deep.nested.map(entry => entry.path)).toEqual([join(deep.path, 'group', 'child-plain')])
   })
 
-  it('removes the whole creation when a nested repository cannot take a branch', async () => {
+  it('leaves out one nested repository that cannot take a branch and keeps the rest', async () => {
     const { scratch, root } = world('parent')
     // A repository with no commit has no HEAD for a new branch to start from.
     execFileSync('git', ['init', '-q', '-b', 'main', join(root, 'empty-child')], {
       env: { ...process.env, ...IDENTITY },
     })
-    writeFileSync(join(root, '.gitignore'), 'empty-child/\n')
+    const child = join(root, 'child-plain')
+    repositoryAt(child, 'plain.txt', 'plain child\n')
+    writeFileSync(join(root, '.gitignore'), 'empty-child/\nchild-plain/\n')
     git(root, ['add', '-A'])
-    git(root, ['commit', '-q', '-m', 'ignore the nested repository'])
+    git(root, ['commit', '-q', '-m', 'ignore the nested repositories'])
 
-    const target = join(scratch, 'wt')
-    await expect(new WorktreeService({ nestedRepositories: 'all' })
-      .create({ cwd: root, branch: 'rollback', path: target }))
-      .rejects.toThrow(/empty-child/u)
+    const createdWorktree = await new WorktreeService({ nestedRepositories: 'all' })
+      .create({ cwd: root, branch: 'tolerant', path: join(scratch, 'wt') })
 
-    expect(existsSync(target)).toBe(false)
-    expect((await new WorktreeService().list(root)).map(entry => entry.branch)).toEqual(['main'])
+    // The checkout the caller asked for exists, carrying every repository Git
+    // could give a branch to; the one it could not is named rather than costing
+    // the whole mirror.
+    expect(createdWorktree.nested.map(entry => entry.path)).toEqual([join(createdWorktree.path, 'child-plain')])
+    expect(createdWorktree.nestedSkipped).toHaveLength(1)
+    const [skipped] = createdWorktree.nestedSkipped
+    expect(skipped?.relative).toBe('empty-child')
+    expect(skipped?.repositoryRoot).toBe(join(root, 'empty-child'))
+    expect(skipped?.code).toBe('no-commits')
+    expect(existsSync(join(createdWorktree.path, 'child-plain', 'plain.txt'))).toBe(true)
+    expect(existsSync(join(createdWorktree.path, 'empty-child'))).toBe(false)
+    expect((await new WorktreeService().list(root)).map(entry => entry.branch)).toEqual(['main', 'tolerant'])
   })
 
   it('rejects a scan depth that is not a positive integer', () => {

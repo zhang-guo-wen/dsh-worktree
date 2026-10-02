@@ -14,17 +14,20 @@
 
 | 组件 | 位置 | 作用 |
 |---|---|---|
-| `worktree` 服务 | `src/service.ts` | 仓库根解析、创建/列举/删除 linked worktree、按布局推导默认路径；git 调用与超时在 `src/git.ts`，主仓库回溯在 `src/repository.ts`，`worktree list --porcelain` 解析在 `src/porcelain.ts` |
-| 模型工具 | `src/tools.ts` | `worktree_create` / `worktree_list` / `worktree_remove`，配置字段可改名 |
-| Host 路由 | `src/route.ts` | `POST /worktree/api/{start,list,branches}`：原子地"建 checkout → 注册工作区 → 开会话 → 把会话挂进该工作区"，并给界面提供本地分支列表；开会话本身在 `src/session.ts` |
+| `worktree` 服务 | `src/service.ts` | 仓库根解析、创建/列举/删除 linked worktree、按布局推导默认路径、linked checkout 探测（`inspectLinkedCheckout`）；git 调用与超时在 `src/git.ts`，主仓库回溯在 `src/repository.ts`，`worktree list --porcelain` 解析在 `src/porcelain.ts` |
+| 归档清理 | `src/archive-cleanup.ts` | 订阅 `workspace/session-stop`（归档落盘后的通知），删掉被归档会话的 linked checkout 与其工作区记录；同时把结果记进 outcome 表供浏览器半边读取 |
+| Host 路由 | `src/route.ts` | `POST /worktree/api/{start,list,branches,checkout}`：原子地"建 checkout → 注册工作区 → 开会话 → 把会话挂进该工作区"，并给界面提供本地分支列表与归档结果探测；开会话本身在 `src/session.ts` |
 | 浏览器控件 | `src/client/` | 新会话屏幕 `选择工作区 / 模式` 那一行右侧的一个胶囊：左边是本地分支下拉，右边是 `worktree` 勾选；`WorktreeChip.tsx` 渲染，`seat-store.ts` 管状态，`api.ts` 是路由客户端 |
+| 归档通知（浏览器） | `src/client/checkout-notice-store.ts` + `checkout-notice.tsx` | 跟随 Workspace 列表，有人归档后行消失就探测 Host 的结果，**成功/保留各弹一条独立 toast**（`shell.overlay` 座位）；纯逻辑与渲染分开，前者能在自足 suite 里跑 |
 | 设置页 | `src/client/SettingsSection.tsx` | 设置 → **Worktree**，标题「worktree 配置」，三行：**创建子仓库**开关（默认关）、**扫描层级**（默认 1）、**worktree 存储位置**（工作区内 / 仓库同级 / 用户目录；说明文字跟着选项显示对应路径）。右下角 `[恢复默认] [保存]`。行式左右布局（同「通用设置」）。保存即生效，不需要重启；暂存表单在 `settings-store.ts` |
 | 两侧共享 | `src/policy.ts` / `src/branch-rule.ts` / `src/validate.ts` | 默认值与取值集合（`policy.ts` 不 import 任何东西，浏览器 bundle 才能直接用）、Host 与浏览器必须逐字一致的分支名规则、路径与目录校验 |
+
+**本插件不注册任何模型工具。** 建 / 列 / 删 checkout 都是用户操作，界面负责全部三件；唯一的自动删除是归档回调（见「归档清理」）。曾经的 `src/tools.ts`（`worktree_create` / `worktree_list` / `worktree_remove`）与 `createToolName` / `listToolName` / `removeToolName` 三个配置字段已随此决定删除。
 
 - `lib/` —— 构建产物：**已提交进仓库**（`index.mjs` host + `client.js` 浏览器 handoff），
   这样别人可以直接从 git 安装。改完源码**记得 `npm run build` 并把 `lib/` 一起提交**。
 - `cordis.patch.yml` —— 把插件行插入组合的 bundle 层。
-- `tests/` —— 11 个 spec：`service` / `porcelain` / `route` / `plugin` / `session` / `nested` / `client` 属于自足子集，
+- `tests/` —— 13 个 spec：`service` / `porcelain` / `route` / `plugin` / `session` / `nested` / `archive-cleanup` / `checkout-notice` / `client` 属于自足子集，
   `seat` / `registration` / `navigation` / `settings` 四个浏览器半边 spec 需要 checkout。两个 runner 见「测试」。
 
 ## 组合接线（cordis.patch.yml）
@@ -41,9 +44,9 @@
 
 行 id 是 `worktree`：它同时是 host 插件导出的 `name` 与设置命名空间 `SETTINGS_NAMESPACE`，也是 `/worktree/api` 前缀的由来。
 
-host 插件导出 `{ name, inject, Config, apply }`。`inject: ['tools']` 是工具注册的硬依赖；`webServer` / `workspaceRegistry` / `agents` 由 `registerRoute` 里的 `ctx.inject` 等，settings 也用 `ctx.inject(['settings'], …)` 软探测——缺 `webServer` / `workspaceRegistry` / `agents` 之一就不挂路由（handler 三个都要用），缺 settings 就只是不能在线改策略，工具照常注册，插件不会整体不激活。
+host 插件导出 `{ name, Config, apply }`，**没有 `inject`**：本插件不注册模型工具，所以对工具注册表没有硬依赖。`webServer` / `workspaceRegistry` / `agents` 由 `registerRoute` 里的 `ctx.inject` 等，`workspaceRegistry` 由 `installArchiveCleanup` 里的 `ctx.inject` 等，settings 也用 `ctx.inject(['settings'], …)` 软探测——缺 `webServer` / `workspaceRegistry` / `agents` 之一就不挂路由（handler 三个都要用），缺 settings 就只是不能在线改策略，服务照常提供，插件不会整体不激活。
 
-浏览器半边注册两处座位：`conversation.input.dock`（id `worktree`，order -10，排在最前）与 `settings.section`（id `worktree`，order 30），并注册 `worktree` 字典。
+浏览器半边注册三处座位：`conversation.input.dock`（id `worktree`，order -10，排在最前）、`settings.section`（id `worktree`，order 30）与 `shell.overlay`（id `worktree-checkout`，order 100，归档结果的第二条通知），并注册 `worktree` 字典。
 
 ## 安装
 
@@ -139,7 +142,41 @@ Workspace 的身份判据是 **`fs.realpath` 之后的路径字符串相等**（
 
 1. **不会污染原 checkout 的子模块**。linked worktree 里的子模块有**自己独立的 git dir**（`<主仓库>/.git/worktrees/<wt>/modules/<name>`），和主 checkout 的 `<主仓库>/.git/modules/<name>` 是两份。所以在工作区里改子模块，原来的 checkout 一点不动。
 2. **子模块是 detached HEAD**：gitlink 的语义就是钉在某个 commit 上，不是分支。想要分支就把它当独立嵌套仓库（`nestedRepositories: all` 也只对"自己带 `.git` 目录"的仓库建分支，子模块不算）。
-3. **删除必须子仓库先行**。新的 checkout 里那些子仓库的目录是**别的仓库的 worktree**：先删父目录，它们各自仓库里就会留下一条"路径已不存在"的记录。所以 `worktree_remove` 先按深度倒序删掉嵌套 checkout，再删父 checkout；**任何一步发现未提交的改动都会在动手之前拒绝**（删父之前也会先查父自己的改动，且不把即将被删掉的子仓库目录算作父的脏)。
+3. **删除必须子仓库先行**。新的 checkout 里那些子仓库的目录是**别的仓库的 worktree**：先删父目录，它们各自仓库里就会留下一条"路径已不存在"的记录。所以 `remove()` 先按深度倒序删掉嵌套 checkout，再删父 checkout；**任何一步发现未提交的改动都会在动手之前拒绝**（删父之前也会先查父自己的改动，且不把即将被删掉的子仓库目录算作父的脏)。
+4. **一个独立嵌套仓库带不过来，不牵连整条创建**。没有 commit（unborn HEAD，拿不到可作起点的 `HEAD`）或 Git 拒绝 checkout 的仓库会被**跳过**，连同原因（`no-commits` / `create-failed`）记进 `CreatedWorktree.nestedSkipped`，界面在 worktree 胶囊上用警告图标与悬停文案点出；父 checkout 与其余子仓库照常到位。只有**子模块**拉不下来才整体回滚——那是父仓库自己记录的树不完整，和"某个无关仓库没有提交"不是一回事。
+
+### 归档清理（`src/archive-cleanup.ts`）
+
+**harness 没有"会话已归档"事件。** Workspace registry 只提供两处：`workspace/session-activity`（归档**准入**的 waterfall）与 `workspace/session-stop`（归档**落盘之后**发给各 provider 的通知，见 `packages/workspace/workspace/src/index.ts` 的 `archiveSession`）。后者正是本插件要的时机，但 `archiveSession` 只在 `stopActivity: true` 时才 dispatch 它。
+
+触发流程：界面先以 `stopActivity` 缺省值归档 → 会话有活动时 registry 抛 `workspace/session-active`，弹「停止并归档」→ 用户确认后 `stopActivity: true` → 归档落盘 → `workspace/session-stop` → 本模块删 checkout。空闲会话（无活动、无需确认）走缺省归档路径，**不会有这个通知**：该 checkout 留到下一次归档触发时被顺带清掉（`reconcile` 只处理被通知到的那批 session id），或由用户按旧方式手动删除。
+
+一次 reconcile 的判定链（`reconcile` → `discard`）：
+
+1. 读 `workspaceRegistry.archivedSessionIds`；集合为空直接返回。
+2. 由 session id 定位工作区：先用 `ctx.get('sessions').get(id)?.header.cwd` 比对路径，回落到 `workspace.sessionIds` 记账。
+3. **只认 `workspace.sessionIds[0]` 已在归档集合里的那次归档**：子代理（subagent / fork）与父会话同 cwd，归档子代理绝不能删掉父还在用的工作区。
+4. `service.inspectLinkedCheckout(workspace.path)`：判据来自 `git worktree list` 本身，主 worktree 与"只是位于 checkout 内部"的目录都返回 `undefined`，所以仓库自身的工作树永远不是删除目标。
+5. `service.remove({ cwd: repositoryRoot, path })`：脏 checkout 由服务自己的 `assertRemovable` 拒绝，本模块**不传 force**——拒绝原因写进日志，checkout 原样保留。
+6. 成功后 `workspaceRegistry.delete(workspace.id)` 摘掉工作区记录。
+
+三条不变量：**不拦截归档**（只订阅通知，失败全部降级为日志）；**不丢工作**（脏目录一律保留）；**并发串行**（多个归档同时到达时由模块内的 promise 链排队）。
+
+### 归档结果与第二条通知
+
+Worktree 行消失时，浏览器看不到"目录是被删了还是被保留了"——它只看得到行。所以 Host 把结果记下来，浏览器来问：
+
+- `rememberArchiveOutcome(path, { outcome, reason? })`：删除成功记 `removed`，被服务拒绝（脏目录、未知 checkout）记 `kept` + 拒绝原文。表是**进程内 Map**，不落盘——它服务的是紧随归档几秒后的那条 banner，丢一条最多少一次提示，绝不会给出错误提示；同一路径后来的结果直接覆盖前一条（`kept` → 后续 `removed` 也成立）。
+- `POST /worktree/api/checkout { path }`（`src/route.ts`）返回 `probeArchiveOutcome(path)`：`removed` / `kept` / `unknown`。**`unknown` 是关键语义**：手动删掉一个工作区记录时目录还在、插件也没碰过它，于是它是 `unknown`，浏览器**不弹任何提示**，不会把"只是注销了工作区"说成"已删除"。
+
+浏览器半边（`src/client/checkout-notice-store.ts` 纯逻辑 + `checkout-notice.tsx` 渲染）：
+
+- 跟随 `ctx.get('workspaces').list`（侧边栏渲染的那份列表）。**第一帧只做基线，不报任何东西**——Client 装载时上一次页面造成的删除早已过去。
+- 行消失时先判断"它的会话是否都已归档"：只有归档会结束 checkout，未归档的行是用户自己注销的，不探测、不提示。
+- 探测回来 `removed` → 成功 toast（`tone: 'success'`）；`kept` → 警告 toast + 拒绝原因；`unknown` → 静默。
+- 座位是 `shell.overlay`（frame 级浮动层，root scope，`ui-layout` 声明它就是给这种"toast 栈"用的），`order: 100`。**这条通知与归档 toast 完全独立**：它只读 Host 已记录的结果，不参与归档请求，所以它渲染失败、延迟、或根本没有这条座位，都不影响归档。
+- 判读顺序有个坑：**归档集合必须在判断"行是不是被归档删掉的"之前用当前帧更新**。归档集合与行消失是同帧到达的，先读旧集合会把唯一要报的那种情况漏掉（`tests/checkout-notice.spec.ts` 的两个用例就是钉这条）。
+- 缺 `workspaces` 服务时不装配这条通知，归档本身照常（Host 侧照样清理）。
 
 ## 扫描与布局
 
@@ -168,13 +205,11 @@ Workspace 的身份判据是 **`fs.realpath` 之后的路径字符串相等**（
     # 以下只在启动时生效，改完要重启 host
     agentsDirectory: .agents/worktree   # defaultPath: agents 时的工作区子目录；缺的层级会自动创建
     gitTimeoutMs: 60000             # 单次 git 调用的上限（子模块拉网络时会用满它）
-    createToolName: worktree_create
-    listToolName: worktree_list
-    removeToolName: worktree_remove
-    startSessionRoute: true
+    startSessionRoute: true         # 是否挂 /worktree/api（界面建会话走它）
+    removeOnSessionArchive: true    # 归档会话时是否删掉它的 linked checkout（默认开）
 ```
 
-设置页只放**会改变 checkout 长什么样**的三项；`agentsDirectory`、`gitTimeoutMs`、工具名是部署形态，留在 profile 的 patch 里。volatile 字段要求 harness 的 `schemastery` 提供 `.volatile()`（**≥ 3.18.4**）——这也是本插件 `devDependencies` 里那个版本下限的来由；更早的 harness 只支持启动时配置。
+设置页只放**会改变 checkout 长什么样**的三项；`agentsDirectory`、`gitTimeoutMs`、`startSessionRoute`、`removeOnSessionArchive` 是部署形态，留在 profile 的 patch 里。volatile 字段要求 harness 的 `schemastery` 提供 `.volatile()`（**≥ 3.18.4**）——这也是本插件 `devDependencies` 里那个版本下限的来由；更早的 harness 只支持启动时配置。
 
 `agentsDirectory` 必须是工作区相对目录（不能是绝对路径、不能带 `..` 段），`nestedScanDepth` 必须是正整数；两者在服务构造与服务热替换时都会校验，不合法直接抛错。
 
@@ -192,15 +227,16 @@ Workspace 的身份判据是 **`fs.realpath` 之后的路径字符串相等**（
 |---|---|
 | 目标分支已存在 | 创建失败，不留残留记录（自动 `worktree prune`） |
 | 分支名非法 | 在启动 git **之前**拒绝；浏览器也先行拒绝，两侧共用同一条规则 |
-| 目录有改动 | `worktree_remove` 拒绝；要删需显式 `force` |
-| 删除主 checkout | 拒绝 |
+| 目录有改动 | `remove()` 拒绝（UI 删除不传 force）；归档清理同样不传 force，checkout 原样保留 |
+| 删除主 checkout | 拒绝（`inspectLinkedCheckout` 对主 worktree 也返回 `undefined`，归档清理根本不会尝试） |
 | 删除未列出的路径 | 拒绝（请求路径先与仓库自己的列举比对，模型编造的路径到不了 git） |
 | 非 Git 仓库 | 控件不渲染（探测失败即隐藏） |
 | **子模块拉不下来**（网络、鉴权、或本地路径子模块被 Git 的 `protocol.file.allow` 拒绝） | 创建整体回滚：已建的嵌套 checkout 先删、父 checkout 再删，错误原样抛出 |
-| **某个嵌套仓库建不了分支**（例如它还没有任何 commit，没有 HEAD 可拉） | 同上，整体回滚，错误点名那个目录 |
+| **某个嵌套仓库建不了分支**（例如它还没有任何 commit，没有 HEAD 可拉；或 Git 拒绝了这次 checkout） | **只跳过这一个**：创建照常成功，父 checkout 与其余子仓库照常到位，该仓库连同原因（`no-commits` / `create-failed`）记进 `CreatedWorktree.nestedSkipped`，Host 侧 `warn` 日志点名它，界面在 worktree 胶囊上用警告图标 + 悬停文案列出 |
 | **删除带已初始化子模块的 checkout** | Git 对这类 worktree 一律拒绝（哪怕干净），所以插件先自己查改动、干净时才用 `--force`；有改动照样拒绝 |
 | 回滚时清理也失败 | 错误里同时给出原始原因和没删掉的目录，绝不静默留下垃圾 |
-| `webServer` / `workspaceRegistry` / `agents` 缺失 | host 工具照常挂载，只是没有路由（handler 三个都要用，缺一个就不挂） |
+| `webServer` / `workspaceRegistry` / `agents` 缺失 | 服务照常提供，只是没有路由（handler 三个都要用，缺一个就不挂）；缺 `workspaceRegistry` 时归档清理也不装配 |
+| 路由未挂 / 探测请求失败 | 浏览器半边的 `checkout` 探测退化为 `unknown`，因此**不弹第二条通知**；归档与第一条通知不受影响 |
 | 会话挂不进工作区 | 报 `[attach]`，checkout 与会话都保留（删掉 checkout 会打断刚在里面启动的会话） |
 
 ## 界面实现细节
@@ -215,7 +251,7 @@ Workspace 的身份判据是 **`fs.realpath` 之后的路径字符串相等**（
 node_modules/.bin/vitest run --root dsh-worktree
 ```
 
-用例覆盖：porcelain 两种分隔格式与 prunable/locked 元数据、分支列表解析、仓库根回溯（linked worktree / submodule 区分）、分支与路径校验、三种存储布局（工作区内 / 仓库同级 / 用户目录）与 `agentsDirectory` 校验、真实 git 上的创建/列举/删除/脏目录/主 checkout 拒绝/从 linked worktree 内再创建/按指定 base 分支新建、**子模块与独立嵌套仓库的创建与删除（开关默认关、含扫描深度、整体回滚、带子模块 checkout 的拒绝语义、原 checkout 子模块状态不受影响）**、**服务策略热替换**、**设置页的注册门控/字段投影/保存与清理**、路由的原子性与回滚、`branches` 方法、浏览器侧分支规则与路由客户端、座位的基础分支与分支列表、控件"先拉会话目录、再导航"的次序（含导航被拒后的报错）。
+用例覆盖：porcelain 两种分隔格式与 prunable/locked 元数据、分支列表解析、仓库根回溯（linked worktree / submodule 区分）、分支与路径校验、三种存储布局（工作区内 / 仓库同级 / 用户目录）与 `agentsDirectory` 校验、真实 git 上的创建/列举/删除/脏目录/主 checkout 拒绝/从 linked worktree 内再创建/按指定 base 分支新建、**linked checkout 探测（linked / 主 worktree / checkout 内部目录三种答案）**、**子模块与独立嵌套仓库的创建与删除（开关默认关、含扫描深度、跳过一个建不了分支的嵌套仓库并把它记进 `nestedSkipped`、带子模块 checkout 的拒绝语义、原 checkout 子模块状态不受影响）**、**归档清理（删 checkout 与工作区记录、未归档不动、非 linked 不动、脏目录保留、子代理归档不误删父工作区）与归档结果记录（removed / kept + 原因 / unknown、同路径后一次覆盖前一次的真实原因）**、**第二条通知的判定（基線不报、已归档的行消失才探测、removed/kept 各出一条、unknown 静默、未归档不探测、dispose 后丢弃迟到答案）**、**服务策略热替换**、**设置页的注册门控/字段投影/保存与清理**、路由的原子性与回滚、`branches` 方法、浏览器侧分支规则与路由客户端、座位的基础分支与分支列表、控件"先拉会话目录、再导航"的次序（含导航被拒后的报错）。
 
 浏览器半边那四个 spec（`seat` / `registration` / `navigation` / `settings`）要 checkout 的 pnpm store 才能解析运行时依赖，走 `--config vitest.harness.config.ts` 的全量配置：
 

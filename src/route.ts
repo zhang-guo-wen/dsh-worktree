@@ -12,6 +12,9 @@
  * only when its header cwd canonicalizes to that workspace's path, and a
  * mismatch fails loud, so the checkout must exist before the workspace record
  * and the workspace record before the session.
+ *
+ * `checkout` answers the one question the browser half cannot: what the archive
+ * cleanup did to a path whose Workspace row is gone (see `archive-cleanup.ts`).
  * @module @guowenzhang/dsh-worktree/route
  */
 
@@ -19,6 +22,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
+import { probeArchiveOutcome } from './archive-cleanup.ts'
 import { GitCommandError, isGitWorkTree, runGit } from './git.ts'
 import { startSessionIn } from './session.ts'
 import { InvalidInitialSelectionError, type WorktreeService } from './service.ts'
@@ -170,6 +174,14 @@ export function registerRoute(ctx: Context, service: WorktreeService): void {
             writeJson(res, 200, { branches: await service.listBranches(requireString(body.cwd, 'cwd')) })
             return
           }
+          if (method === 'checkout') {
+            // The browser half cannot ask git, and it needs to know why a
+            // Workspace row disappeared: `removed`/`kept` are this plugin's own
+            // archive cleanup, `unknown` a row the user deleted by hand.
+            stage = 'checkout'
+            writeJson(res, 200, probeArchiveOutcome(requireString(body.path, 'path')))
+            return
+          }
           throw new RouteError(404, `unknown worktree API method ${JSON.stringify(method)}`)
         } catch (error: unknown) {
           const status = error instanceof RouteError ? error.status : error instanceof InvalidInitialSelectionError ? 409 : 500
@@ -218,6 +230,13 @@ async function start(
     ...base === undefined ? {} : { base },
     ...path === undefined ? {} : { path },
   })
+  // A nested repository with nothing to check out is left out instead of
+  // failing the start, so the log carries what the response also reports: a
+  // caller that only sees a yes/no would read a partial mirror as a whole one.
+  for (const skipped of created.nestedSkipped) {
+    ctx.logger?.warn?.(`dsh-worktree: left out nested repository ${JSON.stringify(skipped.repositoryRoot)} `
+      + `in ${JSON.stringify(created.path)} (${skipped.code}): ${skipped.reason}`)
+  }
 
   let workspaceId: string
   let attachSession: (sessionId: string) => Promise<void>

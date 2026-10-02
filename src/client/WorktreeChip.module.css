@@ -177,3 +177,14 @@
   margin-right: 6px;
   color: var(--dsw-alias-label-danger, #d33);
 }
+
+/*
+ * A partial mirror is not a failure — the checkout exists, it just does not
+ * carry every nested repository — so this icon is muted rather than alarming.
+ * The glyph carries the attention; the colour must not read as an error.
+ */
+.seatIconWarn {
+  flex: none;
+  margin-right: 6px;
+  color: var(--dsw-alias-label-secondary, #666);
+}

@@ -13,7 +13,9 @@
  *
  * The worktree half is one-way: checking it creates the checkout and starts the
  * session inside it, and nothing checks it back off. A failed start leaves it
- * unchecked with its reason, and the next check retries.
+ * unchecked with its reason, and the next check retries. A start that succeeded
+ * with repositories left out says so instead: the checkout is a partial mirror,
+ * and that is a fact about the new Session rather than a failure of this one.
  * @module @guowenzhang/dsh-worktree/client/WorktreeChip
  */
 
@@ -26,6 +28,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 // Type-only: pulls the ui-conversation SlotMap merge (the hero controls).
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { SkippedNestedEntry } from './api.ts'
 import type { WorktreeSeatState } from './seat-store.ts'
 import css from './WorktreeChip.module.css'
 
@@ -88,6 +91,13 @@ export function WorktreeChip({
   const locked = state.isolated
   const baseLabel = state.base === 'HEAD' ? t('branch.head') : state.base
   const lockedHint = t('seat.applied', { branch: state.checkoutBranch })
+  // A start that succeeded may still have left repositories behind, and the
+  // count alone would not say which ones or why: the notice names every one of
+  // them for as long as that checkout is the Session on screen.
+  const skippedHint = state.skipped.length === 0 ? null : t('seat.skipped', {
+    count: String(state.skipped.length),
+    list: state.skipped.map(entry => `${entry.relative} (${skipText(entry, t)})`).join(', '),
+  })
   // Before the first read the staged base is the only known branch, so the menu
   // offers it rather than opening empty.
   const options = state.branches ?? [state.base]
@@ -125,7 +135,7 @@ export function WorktreeChip({
           )}
         />
         <span className={css.divider} aria-hidden="true" />
-        <label className={css.seat} title={locked ? lockedHint : state.error ?? t('seat.hint')}>
+        <label className={css.seat} title={skippedHint ?? (locked ? lockedHint : state.error ?? t('seat.hint'))}>
           <input
             type="checkbox"
             checked={state.enabled || locked}
@@ -143,8 +153,25 @@ export function WorktreeChip({
           </span>
           <span>{busy ? t('seat.creating') : t('seat.label')}</span>
         </label>
-        {state.error !== null && !locked && <IconWarningOutlineRegular className={css.seatIconError} size={14} />}
+        {/* A partial mirror wears the warning colour while the refusal keeps the
+            danger colour: one is what the checkout does not carry, the other is
+            why there is no checkout at all. */}
+        {state.skipped.length > 0 && <IconWarningOutlineRegular className={css.seatIconWarn} size={14} />}
+        {state.skipped.length === 0 && state.error !== null && !locked
+          && <IconWarningOutlineRegular className={css.seatIconError} size={14} />}
       </div>
     </div>
   )
+}
+
+/**
+ * State one skipped nested repository in the current locale.
+ * @param entry - the skip the Host reported.
+ * @param t - this plugin's locale reader.
+ * @returns the reason, with Git's own text only where this plugin has no copy.
+ */
+function skipText(entry: SkippedNestedEntry, t: WorktreeChipProps['t']): string {
+  return entry.code === 'no-commits'
+    ? t('seat.skippedNoCommits')
+    : t('seat.skippedCreateFailed', { reason: entry.reason })
 }

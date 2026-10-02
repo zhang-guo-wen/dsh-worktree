@@ -14,7 +14,7 @@
  */
 
 import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { request, type BranchList, type ListResult, type StartResult, type WorktreeEntry } from './api.ts'
+import { request, type BranchList, type ListResult, type SkippedNestedEntry, type StartResult, type WorktreeEntry } from './api.ts'
 
 /** The base a new branch starts from when the probe names no local branch. */
 const HEAD = 'HEAD'
@@ -46,6 +46,12 @@ export interface WorktreeSeatState {
   isolated: boolean
   /** A refusal or failure to display, cleared by the next attempt. */
   error: string | null
+  /**
+   * Nested repositories the last successful start left out, so the control can
+   * say what the checkout does not carry instead of presenting a partial mirror
+   * as a whole one. Empty before the first start and after a complete one.
+   */
+  skipped: readonly SkippedNestedEntry[]
 }
 
 const INITIAL: WorktreeSeatState = {
@@ -58,6 +64,7 @@ const INITIAL: WorktreeSeatState = {
   checkoutBranch: '',
   isolated: false,
   error: null,
+  skipped: [],
 }
 
 /**
@@ -140,7 +147,7 @@ export class WorktreeSeatController {
    * must not be blocked by the previous one's start.
    */
   resetStart(): void {
-    this.set({ started: null })
+    this.set({ started: null, skipped: [] })
   }
 
   /**
@@ -174,7 +181,7 @@ export class WorktreeSeatController {
    * @param enabled - the new staged value.
    */
   setEnabled(enabled: boolean): void {
-    this.set({ enabled, error: null })
+    this.set({ enabled, error: null, skipped: [] })
   }
 
   /**
@@ -205,14 +212,19 @@ export class WorktreeSeatController {
     this.set({ creating: true, error: null })
     const result = await request<StartResult>('start', { cwd, base: state.base })
     if (!result.ok) {
-      this.set({ creating: false, enabled: false, error: result.message })
+      this.set({ creating: false, enabled: false, error: result.message, skipped: [] })
       return undefined
     }
     const sessionId = result.value.sessionId
     // Remembering the pair lets the locked control in that checkout report what
     // it was created from instead of the branch the creation produced.
     this.created = { path: result.value.worktree.path, base: state.base }
-    this.set({ creating: false, enabled: false, started: sessionId, error: null })
+    // The start succeeded, so anything it could not bring over is an outcome to
+    // report beside it rather than a reason to keep the control unspent.
+    this.set({
+      creating: false, enabled: false, started: sessionId, error: null,
+      skipped: result.value.worktree.nestedSkipped ?? [],
+    })
     await this.open(sessionId, open)
     return sessionId
   }

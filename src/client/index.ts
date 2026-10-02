@@ -33,10 +33,18 @@ import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 // Type-only: the Client sessions service face (ctx.sessions).
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
+// Type-only: the Client Workspaces service face (ctx.workspaces).
+import type { IWorkspaces } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
 // Type-only: pulls the ui-conversation SlotMap merge (the hero controls).
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+// Type-only: pulls the ui-layout SlotMap merge (`shell.overlay`).
+import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import { WorktreeChip } from './WorktreeChip.tsx'
 import type { WorktreeChipInjected } from './WorktreeChip.tsx'
+import { CheckoutNoticeToast, observeCheckouts } from './checkout-notice.tsx'
+import type { CheckoutNotice, CheckoutNoticeInjected } from './checkout-notice.tsx'
+import { request, type CheckoutProbeResult } from './api.ts'
 import { WorktreeSeatController } from './seat-store.ts'
 import { WorktreeSettingsSection } from './SettingsSection.tsx'
 import { WorktreeSettingsController } from './settings-store.ts'
@@ -47,6 +55,8 @@ export type { WorktreeChipProps, WorktreeChipInjected } from './WorktreeChip.tsx
 export type { WorktreeSettingsSectionProps } from './SettingsSection.tsx'
 export type { WorktreeSettings, WorktreeSettingsFace, WorktreeSettingsState } from './settings-store.ts'
 export type { WorktreeSeatState } from './seat-store.ts'
+export type { CheckoutNotice, CheckoutNoticeProps, CheckoutProbe, CheckoutNoticeInjected } from './checkout-notice.tsx'
+export { observeCheckouts } from './checkout-notice.tsx'
 export { NS } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -81,6 +91,47 @@ export function apply(ctx: Context): void {
     locale: NS,
     inject: () => settings.inject(),
   }, WorktreeSettingsSection))), 'ui-worktree: settings page')
+
+  // The archive flow's second notice. It reads the Workspace list the sidebar
+  // already renders, so it belongs to no Session and rides the frame-wide
+  // overlay seat; a deployment without the Workspaces service simply shows no
+  // second notice and keeps the archive itself (the Host still cleans up).
+  const checkoutNotices = createSnapshotStore<CheckoutNotice[]>([])
+  ctx.inject(['slots', 'workspaces'], (scope: Context) => {
+    const workspaces = scope.get('workspaces') as IWorkspaces | undefined
+    if (workspaces === undefined) return
+    /**
+     * Ask the Host what the archive flow did to a path whose row is gone.
+     * A refusal or an unreachable route reports `unknown`, which shows nothing.
+     */
+    const probe = async (path: string): Promise<CheckoutProbeResult> => {
+      const result = await request<CheckoutProbeResult>('checkout', { path })
+      return result.ok ? result.value : { outcome: 'unknown' }
+    }
+    scope.effect(
+      () => observeCheckouts(workspaces, probe, checkoutNotices),
+      'ui-worktree: checkout notices',
+    )
+    scope.slots.inject('shell.overlay', () => scope.slots.register({
+      name: 'shell.overlay',
+      id: 'worktree-checkout',
+      // After any lower-order overlay entry: this notice follows an archive the
+      // user just confirmed, so nothing may cover it.
+      order: 100,
+      locale: NS,
+      inject: (): CheckoutNoticeInjected => ({
+        hooks: { notices: checkoutNotices },
+        probe,
+        text: notice => t(notice.outcome === 'removed' ? 'checkout.removed' : 'checkout.kept', {
+          path: notice.path,
+          reason: notice.reason ?? '',
+        }),
+        dismiss: (seq: number) => {
+          checkoutNotices.set(checkoutNotices.getSnapshot().filter(entry => entry.seq !== seq))
+        },
+      }),
+    }, CheckoutNoticeToast))
+  })
 
   // The conversation scope owns the Session the hero is about to hand over to,
   // so the chip and its seat live inside it and are torn down with it.
