@@ -8,7 +8,7 @@ DeepSeek Harness (`dsh`) is the open-source agent harness from DeepSeek AI, wher
 
 ## The problem this plugin solves
 
-A session working directory is frozen when the session is created, so working in an isolated Git worktree meant building the checkout and starting a session by hand; this plugin does both from one check on the New Session screen.
+Git worktree isolation for DeepSeek Harness: create a worktree, register it as its own workspace, and start the session inside it. A session working directory is frozen when the session is created, so working in an isolated Git worktree meant building the checkout and starting a session by hand; this plugin does both from one check on the New Session screen.
 
 ## Screenshots
 

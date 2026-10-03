@@ -8,7 +8,7 @@ DeepSeek Harness（`dsh`）是 DeepSeek AI 开源的 agent harness，几乎所�
 
 ## 这个插件解决什么问题
 
-DSH 的会话工作目录在创建时冻结，想在独立 Git worktree 里干活就得手工建 checkout 再开会话；本插件在新会话界面勾一下就做完这两件事。
+为 DeepSeek Harness 提供 Git worktree 隔离：创建 worktree、登记为独立工作区，并在其中启动会话。DSH 的会话工作目录在创建时冻结，想在独立 Git worktree 里干活就得手工建 checkout 再开会话；本插件在新会话界面勾一下就做完这两件事。
 
 ## 截图
 
