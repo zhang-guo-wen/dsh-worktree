@@ -241,6 +241,8 @@ Worktree 行消失时，浏览器看不到"目录是被删了还是被保留了"
 
 ## 界面实现细节
 
+- **手机端（≤ 600px）不做同一行悬浮对齐**：与宿主手机断点对齐，`conversation.input.dock` 恢复正常文档流，控件放在选择目录 / Agent 下一行、输入卡片上方，左侧 padding 为 20px。必须同时覆盖 `data-phase='hero'` 与嵌入式的 `data-content-phase='hero'`，将 row 的 `height` / `margin` 与 pill 的 `position` / `right` / `bottom` 全部重置。分支菜单 wrapper 允许收缩，长分支省略而 worktree 段不收缩；桌面布局保持下面的对齐方式。
+
 - **胶囊与 `选择工作区 / 模式` 同一行是靠 CSS 对齐的**：hero 那一行的两个槽（`conversation.hero.workspace`、`conversation.hero.agentPreset`）都是 single 槽，第三方插件没有可注册的座位。控件实际注册在 `conversation.input.dock`（order -10，排在最前），在 `data-phase='hero'` 时把这一行压成 0 高度、抵消 `.composerHero` 的 8px 行距，再用 `bottom: calc(100% + 4px)` 悬在输入卡片上方 4px 处、`right: 28px` 收在卡片右边缘内 12px——下边距取 4px，右边距取 12px 是因为卡片右上角是 22px 圆角，靠太近会像压在弧线上；12px 也正好是左侧 workspace 胶囊图标距卡片左边缘的距离。胶囊自身 24px 高、13px 字，和旁边 28px 的 ghost 胶囊同一种语言（无边框、无底色，靠 hover 填充和两段之间 12px 高的细分隔线成形），整体矮一档；`worktree` 一段是 `☐ <新建工作区图标> worktree`：图标跟在勾选框之后、紧贴文字，用的是 `IconProjectAddOutlineRegular`——侧边栏「添加工作区」那个图标，因为这个 check 的结果正是"这个 checkout 变成一个新工作区"；勾选框、图标、文字同在一个 label 里，点哪里都是勾选。两段的字都是 13px/500，和左侧 ghost 胶囊一致。两者顶边对齐。因此：非 hero 阶段它仍退回自己的一行（此时本来也不渲染），hero 行距若被上游改动，对齐会差一点；若别的插件往这个 dock 里注册了 order < -10 的条目，控件会贴到那条的上面。
 - **"开关只在首条消息时才创建"做不到**：客户端 composer 的提交是 ui-conversation 内部的输入状态机，槽位里没有"提交前"钩子（`conversation.composer` 是 chain，选中者只能自己重写整个 composer；`conversation.composer.bar` 是 single，注册进去会把输入框顶掉），Host 侧也只有 `session/prompt` 这个 RPC；而 `SessionHeader.cwd` 又是创建时冻结的不可变字段。所以"先开关、首条消息再建"需要给 harness 加一个提交前扩展点，插件自身无法实现。当前行为是**点击即创建并切过去**。
 

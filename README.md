@@ -13,7 +13,7 @@ Git worktree isolation for DeepSeek Harness: create a worktree, register it as i
 ## Screenshots
 
 ![The worktree capsule on the New Session screen](docs/images/new-session.png)
-Ticking `worktree` at the right end of the `选择工作区 / 模式` row creates the checkout and starts the session inside it.
+Ticking `worktree` creates the checkout and starts the session inside it. On desktop, the branch/worktree capsule sits at the right end of the workspace/Agent row; on mobile (600px wide or less), it occupies a separate row below those pickers and above the input card.
 
 The task-list integration can prompt to initialize a selected non-Git workspace. After explicit confirmation, `/worktree/api/init` accepts its registered workspace ID, lists the workspace's top-level files and folders, then creates `.git` and a first commit containing the selected items and `.gitignore`. Unselected items receive root-anchored ignore rules; the task list then starts a worktree. Existing `.gitignore` rules are preserved.
 
@@ -32,7 +32,7 @@ From the npm registry: <https://www.npmjs.com/package/@guowenzhang/dsh-worktree>
 
 ### Start a session in a new worktree
 
-On the New Session screen, the `选择工作区 / 模式` row grows a second capsule at its right end: `⑂ <branch> ▾ │ ☐ <add-workspace icon> worktree`. The left half is the **local branch dropdown** — the local branch the new branch starts from, defaulting to the branch of the checkout the session is in, or `HEAD` when that cannot be read. The list is read only when the menu opens, sorted by most recent commit, and holds `refs/heads` only: a remote branch or a tag would make `git worktree add` enter a detached HEAD silently, so neither is offered. The interface never asks for a branch name.
+On the New Session screen, a second capsule appears at the right end of the workspace/Agent row on desktop, or on its own row below it on mobile: `⑂ <branch> ▾ │ ☐ <add-workspace icon> worktree`. The left half is the **local branch dropdown** — the local branch the new branch starts from, defaulting to the branch of the checkout the session is in, or `HEAD` when that cannot be read. The list is read only when the menu opens, sorted by most recent commit, and holds `refs/heads` only: a remote branch or a tag would make `git worktree add` enter a detached HEAD silently, so neither is offered. The interface never asks for a branch name.
 
 Ticking the `worktree` half is the whole action, and it runs four steps in order: the checkout is created from the **main repository** with `git worktree add -b <branch> <path> <base>` (a session already inside a linked worktree still resolves back to the main repository); the new directory is registered as a workspace; the session is started with that directory as its `meta.cwd`; and the session is attached to the workspace ledger, because a session belongs to a workspace only through that ledger — without it the session renders as ungrouped and `选择工作区` has no name to display. The browser then refreshes the session catalog and switches to the session, because the Host created it outside the client's Session Controller and navigation refuses an id that has not been catalogued yet.
 

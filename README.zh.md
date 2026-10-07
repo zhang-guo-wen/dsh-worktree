@@ -13,7 +13,7 @@ DeepSeek Harness（`dsh`）是 DeepSeek AI 开源的 agent harness，几乎所�
 ## 截图
 
 ![新会话屏幕上的 worktree 胶囊](docs/images/new-session.png)
-在 `选择工作区 / 模式` 那一行右端勾上 `worktree`，就建好 checkout 并把会话开在里面。
+勾上 `worktree`，就建好 checkout 并把会话开在里面。桌面端的分支 / worktree 胶囊位于选择目录、Agent 那一行右端；手机端（宽度不超过 600px）独占下一行，放在这两个选择器下方、输入框上方。
 
 ![Worktree 设置页](docs/images/worktree-settings.png)
 设置 → Worktree：创建子仓库、扫描层级、worktree 存储位置，右下角是 恢复默认 / 保存。
@@ -30,7 +30,7 @@ npx @deepseek-ai/dsh plugin --profile web add @guowenzhang/dsh-worktree
 
 ### 在新 worktree 里开始会话
 
-在 Git 仓库里开**新会话**时，`选择工作区 / 模式` 那一行的右端出现一个胶囊：`⑂ <分支> ▾ │ ☐ <新建工作区图标> worktree`。左边是**本地分支下拉**——新分支从哪个本地分支开始，默认是当前会话所在 checkout 的分支，取不到就是 `HEAD`。列表在打开菜单时才去读，按最近提交排序，只列 `refs/heads`：远端分支或 tag 会让 `git worktree add` 悄悄进 detached HEAD，所以不给选。界面不提供分支名输入。
+在 Git 仓库里开**新会话**时，桌面端在选择目录、Agent 那一行右端出现一个胶囊，手机端则单独放在下一行：`⑂ <分支> ▾ │ ☐ <新建工作区图标> worktree`。左边是**本地分支下拉**——新分支从哪个本地分支开始，默认是当前会话所在 checkout 的分支，取不到就是 `HEAD`。列表在打开菜单时才去读，按最近提交排序，只列 `refs/heads`：远端分支或 tag 会让 `git worktree add` 悄悄进 detached HEAD，所以不给选。界面不提供分支名输入。
 
 勾上 `worktree` 那一段就是全部动作，它按顺序跑四步：用 `git worktree add -b <branch> <path> <base>` 在**主仓库**上建 checkout（会话即使已经在某个 linked worktree 里，也会回溯到主仓库）；把新目录注册成一个工作区；用新目录作为 `meta.cwd` 启动会话；把该会话挂进工作区的账本——会话只通过这本账归属工作区，不挂的话它在 GUI 里是“未分组”，`选择工作区` 也没有名字可显示。之后浏览器再刷新一次会话目录并切到该会话：新会话是 Host 在**客户端 Session Controller 之外**创建的，不先拉一次目录，导航会以 `unknown session` 拒绝这个 id。`POST /worktree/api/init` 仅接受已登记的工作区 ID，用于任务列表弹窗经用户确认后在非 Git 工作区列出首层文件和目录，并按勾选项创建 `.git` 和首次提交；未勾选项写入根目录 `.gitignore`，原有规则保留。
 

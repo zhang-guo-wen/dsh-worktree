@@ -3,9 +3,10 @@
  *
  * One pill holds both facts the choice is made of: the local branch a new
  * branch starts from, and whether the session moves into a new checkout at all.
- * It sits beside the workspace picker and the agent-preset chip and follows
- * their geometry — the same ghost row, the same rounded ends — drawn one step
- * smaller and clear of the composer card's corner.
+ * It sits beside the workspace picker and the agent-preset chip on desktop,
+ * and on its own row below them on mobile. It follows their geometry — the
+ * same ghost row, the same rounded ends — drawn one step smaller and clear
+ * of the composer card's corner.
  *
  * A session's working directory is fixed at creation, so this control is
  * available only while the session is blank and the choice cannot be revised
@@ -105,6 +106,7 @@ export function WorktreeChip({
     <div className={css.row}>
       <div className={css.pill}>
         <Menu
+          className={css.branchMenu}
           open={open}
           onClose={() => { setOpen(false) }}
           items={options.map(name => ({ id: name, label: name }))}

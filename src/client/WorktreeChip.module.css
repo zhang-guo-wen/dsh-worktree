@@ -1,7 +1,8 @@
 /* Worktree control. One ghost pill holds the branch segment and the worktree
    segment, divided by a hairline; geometry follows the neighbouring hero chips
    so the group reads as the same kind of control. The composer dock renders
-   below the hero control row, so this wrapper lifts the pill onto that row.
+   below the hero control row, so this wrapper lifts the pill onto that row
+   on desktop. On mobile it stays in normal flow beneath the hero controls.
 
    The two halves speak the same ghost language as the chips beside them — no
    border, no fill; a segment's hover and the short hairline between the halves
@@ -64,6 +65,41 @@
   /* The row's own 16px padding plus this inset: a long branch name may reach
      the control row's left end but never past it. */
   max-width: min(calc(100% - 44px), 560px);
+}
+
+/* Match the shell's 600px mobile breakpoint. Keep this dock in normal flow:
+   the workspace/agent row comes before it and the composer card follows it.
+   Reset both hero selectors, including embedded conversations, so the desktop
+   zero-height row and absolute positioning cannot overlap the mobile pickers. */
+@media (max-width: 600px) {
+  :global([data-phase='hero']) .row,
+  :global([data-content-phase='hero']) .row {
+    height: auto;
+    margin: 0;
+    justify-content: flex-start;
+    padding: 0 20px;
+  }
+
+  :global([data-phase='hero']) .pill,
+  :global([data-content-phase='hero']) .pill {
+    position: static;
+    right: auto;
+    bottom: auto;
+    max-width: 100%;
+  }
+
+  .branchMenu {
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+
+  .branch {
+    width: 100%;
+  }
+
+  .seat {
+    flex: none;
+  }
 }
 
 /* Branch segment: the menu trigger holding the base a new branch starts from. */
