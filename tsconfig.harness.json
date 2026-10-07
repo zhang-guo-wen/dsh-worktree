@@ -6,9 +6,9 @@
   // under a profile are spread across several release lines, and mixing them
   // produces slot and service merges that no single deployment ever has.
   //
-  // Run from the Harness checkout root:
-  //   node_modules/.bin/tsc --noEmit -p dsh-worktree/tsconfig.harness.json
-  "extends": "../tsconfig.base.json",
+  // Run `npm run typecheck` in this package. The runner preserves separate
+  // Host/Client Programs and the Harness project-reference boundaries.
+  "extends": "../../deepseek-harness/tsconfig.base.json",
   "compilerOptions": {
     "jsx": "react-jsx",
     "lib": ["ES2024", "DOM", "DOM.Iterable"],

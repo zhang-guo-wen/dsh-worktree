@@ -93,7 +93,7 @@ npm run build     # tsdown（host → lib/index.mjs）+ node build-client.mjs（
 
 **host 半边是进程内模块：重建 `lib/index.mjs` 不会替换正在运行的那份代码。** 只有 `dsh plugin add/remove` 造成的重组才会把它 import 进进程，之后改源码必须**重启宿主**才生效。
 
-client 半边相反：bundle 按内容 revision 提供，刷新页面就会取到新的；改了 client 产物要 bump `HANDOFF_ID` 或强刷浏览器，否则浏览器一直跑旧 bundle。
+client 半边相反：bundle 按内容 revision 提供，重建后刷新页面即可加载新产物；`HANDOFF_ID` 必须始终等于包名，不得用于缓存失效。必要时强刷浏览器。
 
 一个例外是「配置」里标为 volatile 的三个字段：它们由 Host 在文档更新后装回运行中的服务实例，**不需要重启**。
 
@@ -261,10 +261,10 @@ node_modules/.bin/vitest run --root dsh-worktree
 node_modules/.bin/vitest run --root dsh-worktree --config vitest.harness.config.ts
 ```
 
-`tsconfig.harness.json` 走 checkout 的 `paths` 解析到**源码**做类型检查——安装态的各包跨多个发布线，混在一起会得到任何真实部署都不存在的 slot/service 合并结果：
+`npm run typecheck` 通过 `typecheck-harness.mjs` 将 Host 与 Client 分为两个严格检查的 Program，并沿用同一 Harness checkout 的分面 project references；同时分别检查宿主 aggregate，不把 vendor 或两侧同名服务合并压平到插件 Program。`tsconfig.harness.json` 仅提供插件的严格编译选项与源码清单，不直接以它运行 tsc。宿主需已有同一 checkout 的项目产物及生成 Remote 合约；准备方式见宿主开发指南，可用 `DSH_HARNESS_ROOT` 指定 checkout。
 
 ```sh
-node_modules/.bin/tsc --noEmit -p dsh-worktree/tsconfig.harness.json
+npm run typecheck
 ```
 
 ## 发版（Release）
@@ -291,7 +291,7 @@ node_modules/.bin/tsc --noEmit -p dsh-worktree/tsconfig.harness.json
 ## 易崩清单
 
 1. 重建 `lib/` 不重启宿主 → host 半边还是旧代码（`lib/index.mjs` 是进程内模块）。
-2. 改 client 不 bump `HANDOFF_ID` / 不硬刷新 → 浏览器跑旧 bundle（表现为"改动没生效/控件不变"）。
+2. 改 client 未重建 / 未刷新 → 浏览器跑旧 bundle；修改 `HANDOFF_ID` 会使宿主启动图找不到包名对应 factory。
 3. CSS module 里 JSX 引用但 CSS 未定义的类 → `undefined`，静默无样式（改样式后核对类名齐全）。
 4. `ctx.x` 属性访问未 inject 的服务 → 抛错（用 `ctx.get('x')`）。
 5. `agentsDirectory` 写成绝对路径或带 `..` 段、`nestedScanDepth` 不是正整数 → 服务构造/`reconfigure` 抛错，插件加载即失败。
