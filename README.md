@@ -8,6 +8,8 @@ Our project spans multiple repositories and needs parallel development. Git work
 
 This plugin lets you tick `worktree` on the DeepSeek Harness (DSH) New Session screen to create an isolated workspace and start a session inside it. It can also set up submodules and nested repositories alongside the parent checkout.
 
+In the plugin list, display names and descriptions follow the Harness language setting in English or Chinese (English is the default fallback); English names use the package name without its npm scope, Chinese names describe the purpose, and installation still uses the unchanged real package name.
+
 ## Screenshots
 
 Select a base branch and tick `worktree` to create a workspace and open the new session.

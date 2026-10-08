@@ -13,7 +13,8 @@
       "default": "./lib/client.js"
     },
     "./package.json": "./package.json",
-    "./cordis.patch.yml": "./cordis.patch.yml"
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*": "./locale/*"
   },
   "engines": {
     "dsh": ">=0.1.7-0"
@@ -41,6 +42,7 @@
     }
   },
   "files": [
+    "locale",
     "lib/*.mjs",
     "lib/client.js",
     "cordis.patch.yml",
@@ -69,6 +71,7 @@
     "git"
   ],
   "scripts": {
+    "test:metadata": "node --test tests/plugin-metadata.test.mjs",
     "build": "tsdown -c tsdown.config.ts && node build-client.mjs",
     "typecheck": "node typecheck-harness.mjs"
   },

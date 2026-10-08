@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-worktree",
+    "description": "Create an isolated Git worktree, register it as a workspace, and start a session inside it."
+  }
+}
