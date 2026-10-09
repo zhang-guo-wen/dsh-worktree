@@ -11,6 +11,17 @@ const declarations = (selector: string) => {
   return mobile.slice(opening + 1, mobile.indexOf('}', opening))
 }
 
+describe('worktree settings automatic-save surface', () => {
+  it('has no manual-save/reset footer and never discards edits on page exit', () => {
+    const component = readFileSync(new URL('../src/client/SettingsSection.tsx', import.meta.url), 'utf8')
+    expect(component).not.toMatch(/props\.(save|resetField|discard)|css\.(footer|save|resetAll)/)
+    expect(component).toContain("props.edit('nestedRepositories'")
+    expect(component).toContain("props.edit('nestedScanDepth'")
+    expect(component).toContain("props.edit('defaultPath'")
+    expect(component).toContain("t('settings.invalidNumber')")
+  })
+})
+
 describe('worktree mobile layout', () => {
   it('keeps the dock below the workspace/Agent row in both hero surfaces', () => {
     for (const phase of ["[data-phase='hero']", "[data-content-phase='hero']"]) {

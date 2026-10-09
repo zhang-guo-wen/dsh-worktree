@@ -16,7 +16,7 @@ Select a base branch and tick `worktree` to create a workspace and open the new 
 
 ![The worktree control on the New Session screen](<docs/images/new-session.png>)
 
-Configure child repositories, scan depth, and storage location in Settings → Worktree. Changes take effect when saved.
+Configure child repositories, scan depth, and storage location in Settings → Worktree. Valid changes save automatically and take effect immediately; no Save or Reset to default button is needed.
 
 ![The Worktree settings page](<docs/images/worktree-settings.png>)
 

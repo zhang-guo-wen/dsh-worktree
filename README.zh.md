@@ -16,7 +16,7 @@
 
 ![新会话中的 worktree 控件](<docs/images/new-session.png>)
 
-在「设置 → Worktree」中配置子仓库、扫描层级和存储位置，保存即生效。
+在「设置 → Worktree」中配置子仓库、扫描层级和存储位置，有效修改自动保存并立即生效，无需「保存」或「恢复默认」按钮。
 
 ![Worktree 设置页](<docs/images/worktree-settings.png>)
 

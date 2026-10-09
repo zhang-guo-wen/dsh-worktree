@@ -90,12 +90,11 @@ describe('worktree settings page', () => {
     expect(state?.nestedScanDepth.text).toBe('2')
   })
 
-  it('saves the staged policy as one revision-fenced write', async () => {
+  it('automatically saves an edited policy as one revision-fenced write', async () => {
     const mounted = await mount({ value: { nestedRepositories: 'submodules' } })
     const face = page(mounted).inject?.()
     face?.edit('nestedRepositories', 'all')
     expect(face?.hooks.worktreeSettings.getSnapshot().dirty).toBe(true)
-    face?.save()
     await Promise.resolve()
     await Promise.resolve()
     expect(mounted.forms.mutations).toEqual([
@@ -110,21 +109,13 @@ describe('worktree settings page', () => {
     // hand-edited value from reaching the document.
     face?.edit('nestedRepositories', 'everything')
     expect(face?.hooks.worktreeSettings.getSnapshot().nestedRepositories.invalid).toBe(true)
-    face?.save()
     await Promise.resolve()
     expect(mounted.forms.mutations).toEqual([])
   })
 
-  it('clears a field back to the composition layer', async () => {
-    const mounted = await mount({ value: { defaultPath: 'sibling' }, user: { defaultPath: 'sibling' } })
-    const face = page(mounted).inject?.()
-    face?.resetField('defaultPath')
-    face?.save()
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(mounted.forms.mutations).toEqual([
-      { ops: [{ op: 'unset', path: ['defaultPath'] }], expectedRevision: 1 },
-    ])
+  it('exposes no manual save, reset or discard actions', async () => {
+    const mounted = await mount()
+    expect(Object.keys(page(mounted).inject?.() ?? {}).sort()).toEqual(['edit', 'hooks'])
   })
 
   it('registers no page while the Host does not serve the entry', async () => {

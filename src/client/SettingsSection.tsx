@@ -6,18 +6,15 @@
  * beside it. The rows are the three choices that actually change what a
  * checkout looks like: whether the child repositories come along, how deep the
  * search for them goes, and where the directory lands. Everything else the
- * entry accepts — the agent subdirectory, the git bound, the tool names — is
+ * entry accepts — the agent subdirectory, the git bound, the route options — is
  * deployment composition, edited in the profile's own patch.
  *
- * The footer carries `[Reset to default] [Save]` together, which is why this
- * page renders its own frame instead of the shared one: the shared frame's
- * footer holds the save alone, and a reset that stands far from the rows it
- * clears is the control people forget exists. Staging and saving still come
- * from the shared form model.
+ * Every valid edit saves automatically through the shared settings scope.
+ * There is no manual-save footer, and leaving the page never discards a write.
  * @module @guowenzhang/dsh-worktree/client/SettingsSection
  */
 
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
@@ -121,25 +118,7 @@ export function WorktreeSettingsSection(props: WorktreeSettingsSectionProps) {
   // settings do nothing. The dependency is read from the DRAFT, so flipping
   // the switch answers immediately rather than at the next load.
   const createsNested = state.nestedRepositories.text !== 'none'
-  const overridden = [state.nestedRepositories, state.defaultPath, state.nestedScanDepth]
-    .some(field => field.overridden)
-  // Leaving the page drops every staged edit, exactly as the shared frame
-  // does; the ref keeps the latest discard without re-subscribing.
-  const discard = useRef(props.discard)
-  discard.current = props.discard
-  useEffect(() => () => { discard.current() }, [])
   if (!state.available) return <p className={css.notice} role="status">{labels.unavailable}</p>
-
-  /**
-   * Clear every row's override, so each one falls back to the composition
-   * layer. The clears are staged like any other edit and ride the same save.
-   */
-  const resetAll = (): void => {
-    if (state.nestedRepositories.overridden) props.resetField('nestedRepositories')
-    if (state.defaultPath.overridden) props.resetField('defaultPath')
-    if (state.nestedScanDepth.overridden) props.resetField('nestedScanDepth')
-  }
-  const blocked = !state.dirty || state.invalid || state.saving
 
   return (
     <div className={css.page}>
@@ -204,15 +183,8 @@ export function WorktreeSettingsSection(props: WorktreeSettingsSectionProps) {
           />
         )}
       />
-      <div className={css.footer}>
-        {state.failed ? <p className={css.failed} role="status">{labels.saveFailed}</p> : null}
-        <button type="button" className={css.resetAll} disabled={readOnly || !overridden} onClick={resetAll}>
-          {t('settings.reset')}
-        </button>
-        <button type="button" className={css.save} disabled={blocked} onClick={props.save}>
-          {state.saving ? labels.saving : labels.save}
-        </button>
-      </div>
+      {state.nestedScanDepth.invalid ? <p className={css.failed} role="status">{t('settings.invalidNumber')}</p> : null}
+      {state.failed ? <p className={css.failed} role="status">{labels.saveFailed}</p> : null}
     </div>
   )
 }

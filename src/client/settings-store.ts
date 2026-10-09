@@ -1,106 +1,148 @@
 /**
- * The worktree settings page's staged form.
- *
- * The page edits the live policy of the entry that runs this plugin, so the
- * Host's own document is the single source of truth: a draft is staged here and
- * written only by the form's save. Values the Host would reject never leave the
- * page — a picker can only stage a value its field accepts, and a number that
- * is not a number blocks the save instead of being silently dropped.
+ * Automatically persist the worktree policy through the Host's shared settings
+ * scope. Writes are serialized; drafts typed while a write is in flight stay
+ * visible and are sent next, rather than being cleared by the older response.
  * @module @guowenzhang/dsh-worktree/client/settings-store
  */
 
-import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
-import {
-  SettingsFormModel, settingsNumberField,
-  type SettingsFieldSpec, type SettingsFieldState, type SettingsFormActions,
-  type SettingsFormScope, type SettingsFormShell,
+import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
+import type {
+  SettingsFieldState, SettingsFormScope, SettingsFormShell, SettingsFormPathOp,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { NESTED_REPOSITORY_POLICIES, WORKTREE_LAYOUTS } from '../policy.ts'
 
-/**
- * The fields this page edits. Every one is a live policy field of the Host
- * entry; the rest of the entry's configuration (tool names, whether the route
- * mounts, the agent subdirectory, the git bound) is composition, edited in the
- * deployment's own patch.
- */
+/** The live policy fields exposed by this page. */
 export interface WorktreeSettings {
-  /** Which nested repositories come with a checkout. */
   nestedRepositories?: string
-  /** Where a checkout created without an explicit path goes. */
   defaultPath?: string
-  /** Directory levels searched for nested repositories. */
   nestedScanDepth?: number
 }
 
 /** What the worktree settings page renders. */
 export interface WorktreeSettingsState extends SettingsFormShell {
-  /** Which nested repositories come with a checkout. */
   nestedRepositories: SettingsFieldState
-  /** Where a checkout created without an explicit path goes. */
   defaultPath: SettingsFieldState
-  /** Directory levels searched for nested repositories. */
   nestedScanDepth: SettingsFieldState
 }
 
-/** The registration-side face the page's slot entry injects. */
-export interface WorktreeSettingsFace extends SettingsFormActions {
-  hooks: {
-    /** Page snapshot bound by the renderer as useWorktreeSettings. */
-    worktreeSettings: SnapshotStore<WorktreeSettingsState>
-  }
+/** Only edits are exposed: this page has no manual save or reset workflow. */
+export interface WorktreeSettingsFace {
+  hooks: { worktreeSettings: SnapshotStore<WorktreeSettingsState> }
+  edit: (field: string, text: string) => void
 }
 
-/**
- * A field restricted to a closed set of values.
- *
- * The shared text field would let a user type a policy the Host schema rejects;
- * this stages only a member of the set, and a draft outside it blocks the save
- * the way any other unaccepted draft does. An empty section reads as empty
- * rather than as a member nobody chose.
- * @param field - field name inside the namespace section.
- * @param allowed - the values the Host accepts for it.
- * @returns the field's conversion spec.
- */
-function settingsChoiceField(field: string, allowed: readonly string[]): SettingsFieldSpec {
-  return {
-    field,
-    format: value => typeof value === 'string' && allowed.includes(value) ? value : '',
-    parse: text => allowed.includes(text) ? { kind: 'set', value: text } : undefined,
-  }
+const fields = ['nestedRepositories', 'defaultPath', 'nestedScanDepth'] as const
+type Field = typeof fields[number]
+
+function parse(field: Field, text: string): string | number | undefined {
+  if (field === 'nestedRepositories') return NESTED_REPOSITORY_POLICIES.includes(text as never) ? text : undefined
+  if (field === 'defaultPath') return WORKTREE_LAYOUTS.includes(text as never) ? text : undefined
+  const number = Number(text)
+  return text.trim() !== '' && Number.isSafeInteger(number) && number > 0 ? number : undefined
 }
 
-/** Bridges the Host entry's live form onto the page's staged form. */
+/** Bridges automatic, revision-fenced writes onto the Host's live policy. */
 export class WorktreeSettingsController {
-  private readonly form: SettingsFormModel<WorktreeSettings>
   private readonly store: SnapshotStore<WorktreeSettingsState>
+  private readonly drafts = new Map<Field, string>()
+  private readonly pending = new Map<Field, string>()
+  private readonly unsubscribe: () => void
+  private saving = false
+  private readonly failedFields = new Set<Field>()
+  private disposed = false
 
-  /** @param scope - the shared configuration form of the entry running this plugin. */
-  constructor(scope: SettingsFormScope<WorktreeSettings>) {
-    this.form = new SettingsFormModel(scope, [
-      settingsChoiceField('nestedRepositories', NESTED_REPOSITORY_POLICIES),
-      settingsChoiceField('defaultPath', WORKTREE_LAYOUTS),
-      settingsNumberField('nestedScanDepth'),
-    ])
-    this.store = this.form.bind(() => this.projection())
+  constructor(private readonly scope: SettingsFormScope<WorktreeSettings>) {
+    this.store = createSnapshotStore(this.projection())
+    this.unsubscribe = scope.subscribe(() => { this.publish() })
   }
 
-  private projection(): WorktreeSettingsState {
+  private field(field: Field): SettingsFieldState {
+    const snapshot = this.scope.getSnapshot()
+    const draft = this.drafts.get(field)
+    const value = snapshot.value?.[field]
     return {
-      ...this.form.shell(),
-      nestedRepositories: this.form.field('nestedRepositories'),
-      defaultPath: this.form.field('defaultPath'),
-      nestedScanDepth: this.form.field('nestedScanDepth'),
+      text: draft ?? (value === undefined ? '' : String(value)),
+      overridden: draft !== undefined || Object.hasOwn(snapshot.user ?? {}, field),
+      invalid: draft !== undefined && parse(field, draft) === undefined,
     }
   }
 
-  /**
-   * Build the face the page's slot registration injects.
-   * @returns the page's snapshot and its form actions.
-   */
-  inject(): WorktreeSettingsFace {
-    return { hooks: { worktreeSettings: this.store }, ...this.form.actions() }
+  private projection(): WorktreeSettingsState {
+    const snapshot = this.scope.getSnapshot()
+    return {
+      available: snapshot.status === 'ready',
+      writable: snapshot.writable,
+      dirty: this.drafts.size > 0,
+      invalid: [...this.drafts].some(([field, text]) => parse(field, text) === undefined),
+      saving: this.saving,
+      failed: this.failedFields.size > 0,
+      nestedRepositories: this.field('nestedRepositories'),
+      defaultPath: this.field('defaultPath'),
+      nestedScanDepth: this.field('nestedScanDepth'),
+    }
   }
 
-  /** Release the form subscription. */
-  dispose(): void { this.form.dispose() }
+  inject(): WorktreeSettingsFace {
+    return {
+      hooks: { worktreeSettings: this.store },
+      edit: (field, text) => { this.edit(field, text) },
+    }
+  }
+
+  private edit(name: string, text: string): void {
+    if (!fields.includes(name as Field)) throw new Error(`unknown worktree setting ${name}`)
+    const snapshot = this.scope.getSnapshot()
+    if (this.disposed || snapshot.status !== 'ready' || !snapshot.writable) return
+    const field = name as Field
+    if (!this.saving && !this.drafts.has(field) && this.field(field).text === text) return
+    this.drafts.set(field, text)
+    if (parse(field, text) === undefined) this.pending.delete(field)
+    else this.pending.set(field, text)
+    this.publish()
+    void this.flush()
+  }
+
+  private async flush(): Promise<void> {
+    if (this.saving || this.disposed) return
+    this.saving = true
+    try {
+      while (this.pending.size > 0 && !this.disposed) {
+        const snapshot = this.scope.getSnapshot()
+        if (snapshot.status !== 'ready' || !snapshot.writable) break
+        const batch = new Map(this.pending)
+        this.pending.clear()
+        const ops: SettingsFormPathOp[] = [...batch].map(([field, text]) => ({
+          op: 'set', path: [field], value: parse(field, text),
+        }))
+        this.publish()
+        let accepted = false
+        try { accepted = await this.scope.mutate(ops, snapshot.revision) } catch { /* Keep drafts and show the failure. */ }
+        if (this.disposed) return
+        if (accepted) {
+          for (const [field, text] of batch) {
+            this.failedFields.delete(field)
+            if (this.drafts.get(field) === text && !this.pending.has(field)) this.drafts.delete(field)
+          }
+        } else {
+          for (const field of batch.keys()) this.failedFields.add(field)
+        }
+        // Only newer edits are sent again. A refused batch never retries in a
+        // loop; the next user edit can correct or retry it at the latest revision.
+      }
+    } finally {
+      this.saving = false
+      this.publish()
+    }
+  }
+
+  private publish(): void {
+    if (!this.disposed) this.store.set(this.projection())
+  }
+
+  /** Stop subscriptions and unsent writes when the plugin is unloaded. */
+  dispose(): void {
+    this.disposed = true
+    this.pending.clear()
+    this.unsubscribe()
+  }
 }

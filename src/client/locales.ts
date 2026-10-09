@@ -3,8 +3,6 @@
  * @module @guowenzhang/dsh-worktree/client/locales
  */
 
-import type { SettingsFormLabels } from '@deepseek-ai/dsh-client-ui-primitives'
-
 /** Dictionary namespace for this plugin's UI copy. */
 export const NS = 'worktree'
 
@@ -41,13 +39,10 @@ export const zh = {
   'option.none': '只建父仓库',
   'option.submodules': '带上子模块',
   'option.all': '带上所有子仓库',
-  'settings.reset': '恢复默认',
   'settings.readOnly': '本部署的设置为只读。',
   'settings.unavailable': '该插件当前未加载，暂时无法配置。',
-  'settings.save': '保存',
-  'settings.saving': '保存中…',
-  'settings.saveFailed': '本部署没有接受这些值，已保留供你修改。',
-  'settings.invalidNumber': '请填数字；留空表示使用默认值。',
+  'settings.saveFailed': '自动保存失败，修改尚未保存；请调整或重新选择该设置以重试。',
+  'settings.invalidNumber': '请输入正整数；空值和无效值不会保存。',
   'checkout.removed': '已归档，worktree 已删除：{path}',
   'checkout.kept': '已归档，但 worktree 保留（{reason}）：{path}',
 } as const
@@ -85,13 +80,10 @@ export const en: Record<keyof typeof zh, string> = {
   'option.none': 'Parent only',
   'option.submodules': 'With submodules',
   'option.all': 'With every nested repository',
-  'settings.reset': 'Reset to default',
   'settings.readOnly': 'This deployment stores settings read-only.',
   'settings.unavailable': 'This plugin is not loaded, so it cannot be configured right now.',
-  'settings.save': 'Save',
-  'settings.saving': 'Saving…',
-  'settings.saveFailed': 'The deployment did not accept these values; they were left for you to correct.',
-  'settings.invalidNumber': 'Enter a number, or leave blank to use the default.',
+  'settings.saveFailed': 'Automatic saving failed; changes are not saved. Edit or select the setting again to retry.',
+  'settings.invalidNumber': 'Enter a positive integer; empty or invalid values are not saved.',
   'checkout.removed': 'Archived, and the worktree was deleted: {path}',
   'checkout.kept': 'Archived, but the worktree was kept ({reason}): {path}',
 }
@@ -104,12 +96,10 @@ export type WorktreeCopyKey = keyof typeof zh
  * @param t - this plugin's locale reader.
  * @returns the labels the settings form renders.
  */
-export function formLabels(t: (key: WorktreeCopyKey) => string): SettingsFormLabels {
+export function formLabels(t: (key: WorktreeCopyKey) => string) {
   return {
     unavailable: t('settings.unavailable'),
     readOnly: t('settings.readOnly'),
     saveFailed: t('settings.saveFailed'),
-    save: t('settings.save'),
-    saving: t('settings.saving'),
   }
 }

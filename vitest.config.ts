@@ -19,6 +19,7 @@ export default {
       'tests/registration.spec.ts',
       'tests/navigation.spec.ts',
       'tests/settings.spec.ts',
+      'tests/settings-autosave.spec.ts',
     ],
     environment: 'node',
     pool: 'forks',

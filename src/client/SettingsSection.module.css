@@ -2,9 +2,7 @@
    shape — label and explanation left, control right — matching the General
    section's rows (PreferenceRow, FontSizeRow): pad 16/0, a hairline under each
    row, 14px titles over 12px descriptions, and a capsule control on the
-   trailing edge. The page title and the two-button footer follow the Models
-   page's title and the shared form's save, so this page's chrome is the
-   product's chrome; only the controls are its own. */
+   trailing edge. Valid edits save automatically without a button footer. */
 
 .page {
   display: flex;
@@ -195,83 +193,9 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Footer: the two actions together at the trailing edge. A save whose reset
-   sits somewhere else is a reset nobody finds, and this page's rows are the
-   only thing either button acts on. */
-.footer {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  padding-top: 16px;
-}
-
 .failed {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
+  margin: 12px 0 0;
   font-size: 12px;
   line-height: 1.5;
   color: var(--dsw-alias-label-error);
-}
-
-.resetAll {
-  appearance: none;
-  border: 1px solid var(--dsw-alias-border-l4);
-  border-radius: 8px;
-  padding: 5px 14px;
-  font: inherit;
-  font-size: 13px;
-  line-height: 1.5;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-}
-
-.resetAll:hover:not(:disabled) {
-  color: var(--dsw-alias-label-primary);
-}
-
-.resetAll:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.resetAll:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
-  outline-offset: 1px;
-}
-
-/* The shared settings save, at this page's trailing edge. */
-.save {
-  appearance: none;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  padding: 5px 14px;
-  font: inherit;
-  font-size: 13px;
-  line-height: 1.5;
-  cursor: pointer;
-  background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-label-primary-foreground);
-}
-
-.save:hover:not(:disabled) {
-  background: var(--dsw-alias-button-primary-hover);
-  color: var(--dsw-alias-label-primary-foreground);
-}
-
-.save:hover:disabled {
-  background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-label-primary-foreground);
-}
-
-.save:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.save:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
-  outline-offset: 1px;
 }
