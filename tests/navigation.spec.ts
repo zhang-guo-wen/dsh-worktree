@@ -25,8 +25,12 @@ import type { DraftInput, InputState, SessionInput } from '@deepseek-ai/dsh-clie
  * cross-session carry does the same), and a chip's span is the text it stands
  * for. A snapshot whose chips do not match its text is refused, as the real
  * draft schema refuses it.
+ *
+ * With `textOnly` the double reproduces the older host instead (0.2.0-rc.x):
+ * `setDraft` takes plain text only and throws the way the real editor's
+ * `text.replace` throws on an object.
  */
-function inputDouble(): SessionInput & { setDraft(draft: DraftInput): void } {
+function inputDouble(textOnly = false): SessionInput & { setDraft(draft: DraftInput): void } {
   const state = createSnapshotStore<InputState>({ draft: '', attachmentIds: [], draftRev: 0, phase: 'plain', occurrences: [], queue: [] })
   const bump = (patch: Partial<InputState>): void => {
     state.set({ ...state.getSnapshot(), ...patch, draftRev: state.getSnapshot().draftRev + 1 })
@@ -34,6 +38,7 @@ function inputDouble(): SessionInput & { setDraft(draft: DraftInput): void } {
   return {
     state,
     setDraft: (input) => {
+      if (textOnly && typeof input !== 'string') throw new TypeError('text.replace is not a function')
       const next = typeof input === 'string' ? { text: input, references: [] } : input
       for (const reference of next.references) {
         if (reference.length !== reference.clipboardText.length) throw new Error('draft reference length mismatch')
@@ -102,19 +107,25 @@ function openAttempt(): OpenAttempt {
 
 /**
  * Mount the browser half over the Client services the chip's action reads.
- * @param options - what each list pull catalogues, and the navigation observer.
+ * @param options - what each list pull catalogues, the navigation observer,
+ * and whether the started Session's composer takes plain text only.
  * @returns the inject face and the recorded state.
  */
 async function mount(options: {
   refresh?: (pull: number, rows: Record<string, Row>) => void
   onOpen?: (sessionId: string) => void
+  textOnlyTargets?: boolean
 } = {}): Promise<Mounted> {
   const rows: Record<string, Row> = { sid: { cwd: '/repo', blank: true } }
   const calls: string[] = []
   const gates: string[] = []
   const opened: string[] = []
   const listeners = new Set<() => void>()
-  const inputs: Record<string, SessionInput> = { sid: inputDouble(), 's-1': inputDouble(), 'sid-2': inputDouble() }
+  const inputs: Record<string, SessionInput> = {
+    sid: inputDouble(),
+    's-1': inputDouble(options.textOnlyTargets ?? false),
+    'sid-2': inputDouble(),
+  }
   const rebind = vi.fn()
   const retained = new Set<object>()
   const conversation = {
@@ -229,6 +240,39 @@ describe('worktree chip navigation', () => {
     expect(mounted.inputs['s-1']!.state.getSnapshot()).toMatchObject({ attachmentIds: ['image-1', 'file-2'], occurrences: [{ ref: '/repo/file', offset: 4 }] })
     expect(mounted.rebind).toHaveBeenCalledWith('s-1', ['image-1', 'file-2'])
     expect(mounted.retained.size).toBe(0)
+  })
+
+  it('carries the draft as plain text where the host takes only text', async () => {
+    stubRoute(started)
+    const mounted = await mount({ refresh: catalogue, textOnlyTargets: true })
+    const from = mounted.inputs.sid!
+    from.setDraft('带图草稿')
+    from.addAttachments(['image-1'] as never)
+    await stage(mounted)
+    await settled()
+    expect(mounted.opened).toEqual(['s-1'])
+    expect(from.state.getSnapshot()).toMatchObject({ draft: '', attachmentIds: [] })
+    expect(mounted.inputs['s-1']!.state.getSnapshot()).toMatchObject({ draft: '带图草稿', attachmentIds: ['image-1'] })
+    expect(mounted.rebind).toHaveBeenCalledWith('s-1', ['image-1'])
+    expect(mounted.face.hooks.worktreeSeat.getSnapshot().error).toBeNull()
+  })
+
+  it('rolls back on a text-only host when navigation is refused, then retries once', async () => {
+    stubRoute(started)
+    let refuse = true
+    const mounted = await mount({ refresh: catalogue, textOnlyTargets: true, onOpen: () => { if (refuse) throw new Error('navigation refused') } })
+    mounted.inputs.sid!.setDraft('不要丢失')
+    await stage(mounted)
+    await settled()
+    expect(mounted.inputs.sid!.state.getSnapshot()).toMatchObject({ draft: '不要丢失', attachmentIds: [] })
+    expect(mounted.inputs['s-1']!.state.getSnapshot()).toMatchObject({ draft: '', attachmentIds: [] })
+    expect(mounted.retained.size).toBe(0)
+    refuse = false
+    mounted.face.setEnabled(true)
+    await settled()
+    expect(mounted.opened).toEqual(['s-1'])
+    expect(mounted.inputs['s-1']!.state.getSnapshot().draft).toBe('不要丢失')
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/start'))).toHaveLength(1)
   })
 
   it('takes the latest draft after refresh, including edits made while creation is pending', async () => {

@@ -17,7 +17,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { DraftAttachmentId, DraftInput, SessionInput } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { DraftAttachmentId, DraftInput, DraftSnapshot, SessionInput } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
@@ -43,6 +43,32 @@ type DraftInputFace = Omit<SessionInput, 'setDraft'> & {
 interface DraftConversation {
   readonly input: { for(actx: Context): DraftInputFace }
   rebindDraftFiles?: (sessionId: SessionId, ids: readonly DraftAttachmentId[]) => void
+}
+
+/**
+ * Stage one semantic snapshot, degrading to plain text where the host's
+ * `setDraft` takes only text.
+ *
+ * The published `SessionInput.setDraft` contract is plain text; the semantic
+ * draft form is what the same implementation accepts on hosts whose composer
+ * carries reference chips across sessions (0.2.1+). Older hosts (0.2.0-rc.x)
+ * throw on the object, so the carry probes once per move: an empty semantic
+ * draft is a no-op where the form is supported and throws before touching
+ * state where it is not, and the degraded form rides the clipboard projection
+ * — the same carry the Host's own workspace switch performs on those hosts.
+ * A failing chip restoration is not a capability answer and still reaches the
+ * caller's rollback.
+ * @param next - the target Session's input face.
+ * @param snapshot - the semantic draft to stage.
+ */
+function stageSnapshot(next: DraftInputFace, snapshot: DraftSnapshot): void {
+  try {
+    next.setDraft({ text: '', references: [] })
+  } catch (_error) {
+    next.setDraft(snapshot.text)
+    return
+  }
+  next.setDraft(snapshot)
 }
 
 /**
@@ -98,7 +124,7 @@ export function openWithDraft(
         // One call carries text and reference chips together: the snapshot's
         // ranges are validated against its own text on the way in, so a chip
         // either arrives as a chip or the whole move fails and rolls back.
-        next.setDraft({
+        stageSnapshot(next, {
           text: draft.draft,
           references: draft.occurrences.map(({ occurrenceId: _id, ...reference }) => reference),
         })
