@@ -8,14 +8,39 @@
  *
  *   node_modules/.bin/vitest run --root dsh-worktree --config vitest.harness.config.ts
  *
+ * The checkout is the sibling directory by default and `DSH_HARNESS_ROOT`
+ * overrides it — the same variable `typecheck-harness.mjs` reads, so a run from
+ * a linked worktree (where the package does not sit inside the checkout) names
+ * the checkout once instead of failing on a relative path that is not there.
+ *
  * `vitest.config.ts` is the self-contained subset that runs without the
  * checkout; it covers the Host half and the browser half's pure modules.
  */
 import { readdirSync } from 'node:fs'
-import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import tsconfigPaths from 'vite-tsconfig-paths'
-import { standardDecoratorPlugin, vitestExecArgv } from '../vitest.shared.ts'
+import { join, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { createRequire } from 'node:module'
+
+const harness = resolve(process.env.DSH_HARNESS_ROOT ?? fileURLToPath(new URL('../', import.meta.url)))
+const requireHarness = createRequire(join(harness, 'package.json'))
+const ts = requireHarness('typescript') as typeof import('typescript')
+/**
+ * The checkout's own source aliases, read from its `tsconfig.base.json`.
+ *
+ * A browser spec imports Harness packages by name; resolving them through the
+ * alias list compiles the checkout's source, the same graph the checkout's own
+ * specs run, rather than whatever a package build happens to hold.
+ */
+const harnessConfig = ts.readConfigFile(join(harness, 'tsconfig.base.json'), ts.sys.readFile)
+const sourceAliases = Object.entries(
+  harnessConfig.config.compilerOptions.paths as Record<string, string[]>,
+).map(([name, paths]) => ({
+  find: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`),
+  replacement: resolve(harness, paths[0]!),
+}))
+const { standardDecoratorPlugin, vitestExecArgv } = await import(
+  pathToFileURL(join(harness, 'vitest.shared.ts')).href
+)
 
 /**
  * Locate a package the checkout keeps only in its pnpm store, so a browser
@@ -24,7 +49,7 @@ import { standardDecoratorPlugin, vitestExecArgv } from '../vitest.shared.ts'
  * @returns the absolute package directory of the newest stored copy.
  */
 function pnpmPackage(name: string): string {
-  const store = fileURLToPath(new URL('../node_modules/.pnpm/', import.meta.url))
+  const store = join(harness, 'node_modules/.pnpm')
   const entries = readdirSync(store).filter(entry => entry.startsWith(`${name}@`)).sort()
   const entry = entries[entries.length - 1]
   if (entry === undefined) throw new Error(`no stored ${name} in ${store}`)
@@ -35,9 +60,10 @@ const react = pnpmPackage('react')
 const zustand = pnpmPackage('zustand')
 
 export default {
-  plugins: [tsconfigPaths({ projects: ['../tsconfig.base.json'] }), standardDecoratorPlugin()],
+  plugins: [standardDecoratorPlugin()],
   resolve: {
     alias: [
+      ...sourceAliases,
       { find: /^react$/, replacement: `${react}/index.js` },
       { find: /^react\/jsx-runtime$/, replacement: `${react}/jsx-runtime.js` },
       // A spec that mounts the browser half compiles its components, which the

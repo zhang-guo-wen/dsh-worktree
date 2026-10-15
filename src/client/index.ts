@@ -46,6 +46,7 @@ import { CheckoutNoticeToast, observeCheckouts } from './checkout-notice.tsx'
 import type { CheckoutNotice, CheckoutNoticeInjected } from './checkout-notice.tsx'
 import { request, type CheckoutProbeResult } from './api.ts'
 import { WorktreeSeatController } from './seat-store.ts'
+import { openWithDraft } from './draft-transfer.ts'
 import { WorktreeSettingsSection } from './SettingsSection.tsx'
 import { WorktreeSettingsController } from './settings-store.ts'
 import { SETTINGS_NAMESPACE } from '../policy.ts'
@@ -177,7 +178,8 @@ export function apply(ctx: Context): void {
     }
 
     /**
-     * Show the Session the Host started in the new checkout.
+     * Show the Session the Host started in the new checkout, carrying the draft
+     * the user had typed on the screen they are leaving.
      *
      * The Host created that Session outside this Client's Session Controller,
      * so its id is not in the catalog when the route answers, and navigation
@@ -185,14 +187,26 @@ export function apply(ctx: Context): void {
      * it; the second pull covers the first await having joined a list read that
      * had already started before the Session existed.
      * @param sessionId - the Session the route started.
+     * @param sourceId - the Session on screen when the start was asked for, so a
+     * later switch during the Git run cannot move the wrong draft.
      */
-    const openStarted = async (sessionId: string): Promise<void> => {
+    const openStarted = async (sessionId: string, sourceId: string | undefined): Promise<void> => {
       const service = sessions()
-      if (service === undefined) return
+      if (service === undefined) throw new Error('worktree: sessions service unavailable')
       const catalogued = (): boolean => service.list.getSnapshot().byId[sessionId as SessionId] !== undefined
       await service.refresh()
       if (!catalogued()) await service.refresh()
-      scope.uiWorkspace.openSession(sessionId as SessionId)
+      // The control is only clickable on a screen this seat probed, so a missing
+      // source means there is nothing to carry rather than a reason to stay.
+      if (sourceId === undefined) {
+        scope.uiWorkspace.openSession(sessionId as SessionId)
+        return
+      }
+      // The user moved to another Session while Git ran: open nothing and touch
+      // no draft — the one on screen now is not the one that asked for this.
+      if (shown !== sourceId) return
+      openWithDraft(scope, service, sourceId as SessionId, sessionId as SessionId,
+        () => { scope.uiWorkspace.openSession(sessionId as SessionId) })
     }
 
     const injected = (): WorktreeChipInjected => ({
@@ -216,7 +230,10 @@ export function apply(ctx: Context): void {
         // Checking the control is the whole action: it starts the session
         // immediately, because the alternative is a second button on a row that
         // has room for one control.
-        if (enabled) void controller.start(openStarted)
+        if (enabled) {
+          const sourceId = shown
+          void controller.start(sessionId => openStarted(sessionId, sourceId))
+        }
       },
     })
 

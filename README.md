@@ -12,7 +12,7 @@ In the plugin list, display names and descriptions follow the Harness language s
 
 ## Screenshots
 
-Select a base branch and tick `worktree` to create a workspace and open the new session.
+Select a base branch and tick `worktree` to create a workspace and open the new session. Unsent text, references, and attachments move with it without being submitted; a failed creation or navigation preserves the original draft.
 
 ![The worktree control on the New Session screen](<docs/images/new-session.png>)
 

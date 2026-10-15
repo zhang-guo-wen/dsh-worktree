@@ -14,6 +14,46 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as plugin from '../src/client/index.ts'
 import type { WorktreeChipInjected } from '../src/client/WorktreeChip.tsx'
 import { configFormsDouble } from './config-forms-double.ts'
+import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import type { DraftInput, InputState, SessionInput } from '@deepseek-ai/dsh-client-ui-conversation/client'
+
+/**
+ * A composer standing in for the real input shell.
+ *
+ * It reproduces the two behaviors the carry depends on: `setDraft` takes a
+ * whole semantic draft and re-attaches its reference chips (the Host's own
+ * cross-session carry does the same), and a chip's span is the text it stands
+ * for. A snapshot whose chips do not match its text is refused, as the real
+ * draft schema refuses it.
+ */
+function inputDouble(): SessionInput & { setDraft(draft: DraftInput): void } {
+  const state = createSnapshotStore<InputState>({ draft: '', attachmentIds: [], draftRev: 0, phase: 'plain', occurrences: [], queue: [] })
+  const bump = (patch: Partial<InputState>): void => {
+    state.set({ ...state.getSnapshot(), ...patch, draftRev: state.getSnapshot().draftRev + 1 })
+  }
+  return {
+    state,
+    setDraft: (input) => {
+      const next = typeof input === 'string' ? { text: input, references: [] } : input
+      for (const reference of next.references) {
+        if (reference.length !== reference.clipboardText.length) throw new Error('draft reference length mismatch')
+        if (next.text.slice(reference.offset, reference.offset + reference.length) !== reference.clipboardText) {
+          throw new Error('draft reference does not match the draft text')
+        }
+      }
+      bump({ draft: next.text, occurrences: next.references.map((reference, index) => ({ ...reference, occurrenceId: index })) })
+    },
+    addAttachments: ids => { bump({ attachmentIds: [...state.getSnapshot().attachmentIds, ...ids] }); return true },
+    removeAttachment: id => { bump({ attachmentIds: state.getSnapshot().attachmentIds.filter(value => value !== id) }); return true },
+    insertReference: (ref, span) => {
+      const old = state.getSnapshot()
+      if (span.draftRev !== old.draftRev) return false
+      bump({ occurrences: [...old.occurrences, { ...ref, occurrenceId: old.draftRev, offset: span.start, length: span.end - span.start }].sort((a, b) => a.offset - b.offset) })
+      return true
+    },
+    beginCommand: () => false, pruneAttachments: () => {}, submit: () => {}, notify: () => {}, focus: () => {},
+  }
+}
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -37,6 +77,9 @@ interface Mounted {
   readonly gates: string[]
   /** Catalog listeners still subscribed. */
   readonly listeners: Set<() => void>
+  readonly inputs: Record<string, SessionInput>
+  readonly rebind: ReturnType<typeof vi.fn>
+  readonly retained: Set<object>
 }
 
 /** A promise the fake navigation resolves when it is asked to open a Session. */
@@ -71,6 +114,13 @@ async function mount(options: {
   const gates: string[] = []
   const opened: string[] = []
   const listeners = new Set<() => void>()
+  const inputs: Record<string, SessionInput> = { sid: inputDouble(), 's-1': inputDouble(), 'sid-2': inputDouble() }
+  const rebind = vi.fn()
+  const retained = new Set<object>()
+  const conversation = {
+    input: { for: (ctx: { id: string }) => inputs[ctx.id] },
+    rebindDraftFiles: rebind,
+  }
   let pulls = 0
   let face: WorktreeChipInjected | undefined
 
@@ -85,12 +135,18 @@ async function mount(options: {
   const scope = {
     get: (name: string) => (name === 'sessions' ? {
       list,
+      retain: (id: string) => {
+        if (rows[id] === undefined) throw new Error(`sessions.retain: unknown session ${id}`)
+        const reference = { binding: { ctx: { id } }, release: () => { retained.delete(reference) } }
+        retained.add(reference)
+        return reference
+      },
       refresh: async () => {
         pulls += 1
         calls.push('refresh')
         options.refresh?.(pulls, rows)
       },
-    } : undefined),
+    } : name === 'conversation' ? conversation : undefined),
     effect: (fn: () => unknown) => { fn() },
     uiWorkspace: {
       openSession: (sessionId: string) => {
@@ -125,7 +181,7 @@ async function mount(options: {
   await ctx.plugin(plugin, {}).await()
 
   if (face === undefined) throw new Error('the browser half registered no chip')
-  return { face, rows, calls, opened, gates, listeners }
+  return { face, rows, calls, opened, gates, listeners, inputs, rebind, retained }
 }
 
 /**
@@ -152,6 +208,103 @@ async function stage(mounted: Mounted): Promise<void> {
 }
 
 describe('worktree chip navigation', () => {
+  const started = { sessionId: 's-1', worktree: { path: '/repo-wt' }, workspaceId: 'w-1' }
+  const catalogue = (_pull: number, rows: Record<string, Row>) => { rows['s-1'] = { cwd: '/repo-wt', blank: true } }
+  const settled = () => new Promise(resolve => { setImmediate(resolve) })
+
+  it('moves multiline text, reference chips and attachments before navigation without sending', async () => {
+    stubRoute(started)
+    const mounted = await mount({ refresh: catalogue, onOpen: () => {
+      expect(mounted.inputs['s-1']!.state.getSnapshot().draft).toBe('请检查 @file\n保留全部内容')
+      expect(mounted.retained.size).toBe(2)
+    } })
+    const from = mounted.inputs.sid!
+    from.setDraft('请检查 @file\n保留全部内容')
+    from.insertReference({ source: 'files', ref: '/repo/file', label: 'file', clipboardText: '@file', appearance: 'file' }, { start: 4, end: 9, draftRev: from.state.getSnapshot().draftRev })
+    from.addAttachments(['image-1', 'file-2'] as never)
+    await stage(mounted)
+    await settled()
+    expect(mounted.opened).toEqual(['s-1'])
+    expect(from.state.getSnapshot()).toMatchObject({ draft: '', attachmentIds: [] })
+    expect(mounted.inputs['s-1']!.state.getSnapshot()).toMatchObject({ attachmentIds: ['image-1', 'file-2'], occurrences: [{ ref: '/repo/file', offset: 4 }] })
+    expect(mounted.rebind).toHaveBeenCalledWith('s-1', ['image-1', 'file-2'])
+    expect(mounted.retained.size).toBe(0)
+  })
+
+  it('takes the latest draft after refresh, including edits made while creation is pending', async () => {
+    stubRoute(started)
+    const mounted = await mount({ refresh: (pull, rows) => {
+      catalogue(pull, rows)
+      mounted.inputs.sid!.setDraft('创建期间继续输入')
+    } })
+    mounted.inputs.sid!.setDraft('最初内容')
+    await stage(mounted)
+    await settled()
+    expect(mounted.inputs['s-1']!.state.getSnapshot().draft).toBe('创建期间继续输入')
+  })
+
+  it('preserves the source and rolls back the target on navigation failure, then retries once', async () => {
+    stubRoute(started)
+    let refuse = true
+    const mounted = await mount({ refresh: catalogue, onOpen: () => { if (refuse) throw new Error('navigation refused') } })
+    mounted.inputs.sid!.setDraft('不要丢失')
+    mounted.inputs.sid!.addAttachments(['file-1'] as never)
+    await stage(mounted)
+    await settled()
+    expect(mounted.inputs.sid!.state.getSnapshot()).toMatchObject({ draft: '不要丢失', attachmentIds: ['file-1'] })
+    expect(mounted.inputs['s-1']!.state.getSnapshot()).toMatchObject({ draft: '', attachmentIds: [] })
+    expect(mounted.retained.size).toBe(0)
+    expect(mounted.rebind).toHaveBeenLastCalledWith('sid', ['file-1'])
+    refuse = false
+    mounted.face.setEnabled(true)
+    await settled()
+    expect(mounted.opened).toEqual(['s-1'])
+    expect(mounted.inputs['s-1']!.state.getSnapshot().attachmentIds).toEqual(['file-1'])
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/start'))).toHaveLength(1)
+  })
+
+  it('does not overwrite an existing target draft', async () => {
+    stubRoute(started)
+    const mounted = await mount({ refresh: catalogue })
+    mounted.inputs.sid!.setDraft('source')
+    mounted.inputs['s-1']!.setDraft('target')
+    await stage(mounted)
+    await settled()
+    expect(mounted.opened).toEqual([])
+    expect(mounted.inputs.sid!.state.getSnapshot().draft).toBe('source')
+    expect(mounted.inputs['s-1']!.state.getSnapshot().draft).toBe('target')
+    expect(mounted.retained.size).toBe(0)
+  })
+
+  it('keeps the draft when the Host refuses creation', async () => {
+    stubRoute(started)
+    const mounted = await mount()
+    mounted.inputs.sid!.setDraft('source')
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(
+      String(url).endsWith('/start') ? { error: 'creation refused' } : { worktrees: [] },
+    ), { status: String(url).endsWith('/start') ? 500 : 200 })))
+    await stage(mounted)
+    await settled()
+    expect(mounted.opened).toEqual([])
+    expect(mounted.inputs.sid!.state.getSnapshot().draft).toBe('source')
+  })
+
+  it('does not navigate or take a different session draft after the user switches away', async () => {
+    stubRoute(started)
+    const mounted = await mount({ refresh: async (pull, rows) => {
+      catalogue(pull, rows)
+      rows['sid-2'] = { cwd: '/other', blank: true }
+      await mounted.face.load('sid-2')
+    } })
+    mounted.inputs.sid!.setDraft('source')
+    mounted.inputs['sid-2']!.setDraft('other')
+    await stage(mounted)
+    await settled()
+    expect(mounted.opened).toEqual([])
+    expect(mounted.inputs.sid!.state.getSnapshot().draft).toBe('source')
+    expect(mounted.inputs['sid-2']!.state.getSnapshot().draft).toBe('other')
+  })
+
   it('catalogues the started Session before opening it', async () => {
     stubRoute({ sessionId: 's-1', worktree: { path: '/repo-wt' }, workspaceId: 'w-1' })
     const attempt = openAttempt()
