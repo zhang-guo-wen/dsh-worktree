@@ -19,13 +19,14 @@ paths:
 | 触发 | 机制 | 覆盖 |
 |---|---|---|
 | `workspace/session-stop` | 通知到达即处理该 session id | 「停止并归档」，立即（不等一个周期） |
-| **周期对账（sweep）** | 每 `ARCHIVE_SWEEP_INTERVAL_MS`（30 s）重读 `workspaceRegistry.archivedSessionIds`，处理本进程还没处理过的 id；启动时也跑一次 | 空闲归档、宿主停机期间发生的归档、上一次清理失败留下的残留 |
+| **周期对账（sweep）** | 每 `ARCHIVE_SWEEP_INTERVAL_MS`（30 s）重读 `workspaceRegistry.archivedSessionIds`，处理本进程还没处理过的 id | 空闲归档——只写集合、谁都不通知的那条路 |
 
-sweep 的两条判据：
+**对账不追溯（刻意如此）。** 进程启动时先把当时的归档集合**同步**灌进 `handled`：那时已经在集合里的归档发生在"没有宿主在看"的时候，删它等于替用户执行一次本进程没见过的归档。只有**运行期间新到**的 id 才被清理——也正是缺通知那条路丢掉的正是这种情况。所以：
 
-- **备份按集合走**：集合里的每个新 id 都 `guard.archive(id)`——备份属于发起它的会话，归档即结束，无论有没有通知。
-- **checkout 只认"本进程运行期间新到的"归档**：激活时先把集合**同步快照**成 `inherited`（必须在任何异步之前取，否则启动后才归档的会话会被误判成"启动前就有"，永远不再删它的 checkout），sweep 只对 `arrived - inherited` 调 `reconcile`。历史归档不追删 checkout：checkout 应当由"结束该会话的那次归档"删除，而不是被后来启动的宿主翻旧账。
-- 集合里被移除的 id（取消归档）会从 `handled` 里忘掉，再归档时重新视为新归档。
+- **没有启动补扫**：历史归档的备份与 checkout 都不会被后来的宿主翻旧账；要清就由用户自己删。
+- **取消归档会"复位"**：id 从集合里消失时从 `handled` 里忘掉，之后再次归档按新归档处理。
+
+sweep 的动作：集合里的新 id 逐个 `guard.archive(id)`（备份属于发起它的会话，归档即结束），并对同一批 id 调 `reconcile`（删该次归档结束掉的 checkout）。
 
 一次 reconcile 的判定链（`reconcile` → `discard`）：
 

@@ -289,25 +289,28 @@ describe('archive outcome record', () => {
  * `workspace/session-stop` reaches this module only when an archive stops
  * running work. An idle session's archive — the sidebar's own action — has to be
  * found by comparing the durable archive set with what this process already
- * cleaned up, which is what the sweep does.
+ * cleaned up, which is what the sweep does. The comparison is deliberately not
+ * retroactive: the set a host starts with is recorded as already handled.
  */
 describe('sessions archived without a notification', () => {
-  it('ends the backups of a session archived before this host started', async () => {
+  it('leaves a session archived before this host started alone', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-archive-sweep-'))
     try {
       const guard = await protectedFile(root, 's1')
-      expect(await backupDirectories(join(root, 'guard'))).toHaveLength(1)
 
-      // Nothing announces this archive: the set is the only evidence, and the
-      // checkout that archive once ran in is not this process's to remove.
+      // The archive happened while no host was watching. Deleting its backups
+      // now would carry out an archive this process never saw.
       const { removed } = await mount({
         workspaces: [{ id: 'w1', path: 'C:/repo-wt', sessionIds: ['s1'] }],
         archived: ['s1'],
         sessions: { s1: { header: { cwd: 'C:/repo-wt' } } },
         guard,
+        sweepIntervalMs: 5,
       })
 
-      await vi.waitFor(async () => expect(await backupDirectories(join(root, 'guard'))).toEqual([]))
+      await new Promise(resolve => { setTimeout(resolve, 40) })
+
+      expect(await backupDirectories(join(root, 'guard'))).toHaveLength(1)
       expect(removed).toEqual([])
     } finally {
       await rm(root, { recursive: true, force: true })

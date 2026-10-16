@@ -16,9 +16,15 @@
  * an event that path never sends is what left an archived session's checkout and
  * backups on disk. The archive set itself is the durable record, so this module
  * also reconciles against it on a timer: every sweep ends the backups of any
- * session that appeared in the set since the previous one, and removes the
+ * session that arrived in the set since the previous one, and removes the
  * checkout that archive ended. One interval bounds how long a deleted session's
  * files can outlive it.
+ *
+ * **The sweep is not retroactive.** The archives already in the set when a host
+ * starts stay untouched: they happened while that host was not watching, and
+ * deleting them would carry out an archive this process never saw. Only an
+ * archive that arrives while the process runs is cleaned up — which is exactly
+ * the case the missing notification used to drop.
  *
  * Three constraints shape the rest of this module.
  *
@@ -165,39 +171,32 @@ export function installArchiveCleanup(
   ctx.inject(['workspaceRegistry'], (scope: Context) => {
     const registry = scope.workspaceRegistry as unknown as WorkspaceRegistryLike
     /**
-     * The archive set as it stood when this process started.
+     * Sessions this process has already cleaned up for.
      *
-     * Captured synchronously, before any sweep can run: a sweep that read the
-     * set later would silently promote an archive that arrived in between to
-     * "already archived when we started", and skip its checkout forever.
+     * Seeded with the set this process started with, which is deliberately not
+     * its to clean: an archive that happened while no host was running is the
+     * user's own history, and a sweep that deleted it at the next start would
+     * act on a decision nobody made in this session. Only an archive that
+     * arrives while this process runs is acted on.
      */
-    const inherited = new Set<string>(registry.archivedSessionIds.map(String))
-    /** Sessions this process already cleaned up for. */
-    const handled = new Set<string>()
+    const handled = new Set<string>(registry.archivedSessionIds.map(String))
     /**
-     * Act on every archived session this process has not acted on yet.
+     * Act on every archive that arrived since the previous sweep.
      *
-     * Backups end with the session that took them, so every session in the set
-     * loses them. A checkout is removed only for an archive that arrived while
-     * this process ran: the set it inherited predates it, and a checkout is
-     * ended by the archive that ended its session, not by a later host noticing
-     * an old record.
+     * Backups end with the session that took them, so an arrived archive loses
+     * them; the checkout that archive ended goes with them, because this process
+     * watched that archive happen. An id that left the set — unarchived — is
+     * forgotten, so a later archive of the same session is a new arrival.
      */
     const sweep = async (): Promise<void> => {
       const archived = new Set(registry.archivedSessionIds.map(String))
-      // An id that left the set — unarchived — may be archived again, and that
-      // archive is a new reason to clean up, so the first one must not suppress it.
       for (const id of handled) if (!archived.has(id)) handled.delete(id)
       const arrived = [...archived].filter(id => !handled.has(id))
       if (arrived.length === 0) return
       for (const id of arrived) handled.add(id)
       for (const id of arrived) await guard?.archive(id)
-      const ended = arrived.filter(id => !inherited.has(id))
-      if (ended.length > 0) await reconcile(scope, service, registry, ended as SessionId[])
+      await reconcile(scope, service, registry, arrived as SessionId[])
     }
-    // The set this process inherited may hold archives whose cleanup never ran —
-    // a host that was down, or the idle archive no notification reported.
-    serialize(sweep)
     scope.effect(() => {
       const timer = setInterval(() => { serialize(sweep) }, sweepIntervalMs)
       // A sweep must never be the reason a process stays alive.
