@@ -11,25 +11,29 @@
  * @module @guowenzhang/dsh-worktree/client/settings-fields
  */
 
-import { NESTED_REPOSITORY_POLICIES, WORKTREE_LAYOUTS } from '../policy.ts'
-
-/** The two rows whose control is a switch, and whose schema default is `true`. */
-const SWITCHES: readonly string[] = ['fileGuard', 'denyDestructiveCommands']
+import {
+  DEFAULT_DENY_DESTRUCTIVE_COMMANDS, DEFAULT_FILE_GUARD, DEFAULT_NEW_SESSION_WORKTREE,
+  NESTED_REPOSITORY_POLICIES, WORKTREE_LAYOUTS,
+} from '../policy.ts'
 
 /**
- * The schema default of a switch.
+ * Every switch field, with the schema default an absent value resolves to.
  *
- * An absent draft means "the section carries no value", and what a stored
- * absence resolves to is the schema's own default rather than `false`: reading
- * it as `false` would show the switch off on a deployment that has it on. Both
- * switches default to `true` — this constant must move with `DEFAULT_FILE_GUARD`
- * and `DEFAULT_DENY_DESTRUCTIVE_COMMANDS` in `policy.ts`.
+ * Two of the three default to `true` and one to `false`, so a single
+ * `SWITCH_DEFAULT` would have to lie about somebody. These entries must move
+ * with the `DEFAULT_*` constants in `policy.ts`: a page that renders "on" for a
+ * switch that is off has the user "fix" a setting that was already correct,
+ * which is worse than showing nothing.
  */
-export const SWITCH_DEFAULT = true
+export const SWITCH_DEFAULTS: Readonly<Record<string, boolean>> = {
+  fileGuard: DEFAULT_FILE_GUARD,
+  denyDestructiveCommands: DEFAULT_DENY_DESTRUCTIVE_COMMANDS,
+  newSessionWorktree: DEFAULT_NEW_SESSION_WORKTREE,
+}
 
 /** Every policy field the settings page edits, in the order the page renders them. */
 export const WORKTREE_SETTINGS_FIELDS = [
-  'nestedRepositories', 'defaultPath', 'nestedScanDepth', 'fileGuard', 'denyDestructiveCommands',
+  'newSessionWorktree', 'nestedRepositories', 'defaultPath', 'nestedScanDepth', 'fileGuard', 'denyDestructiveCommands',
 ] as const
 
 /** One policy field the settings page edits. */
@@ -41,7 +45,16 @@ export type WorktreeSettingsField = typeof WORKTREE_SETTINGS_FIELDS[number]
  * @returns true when the field's control is a switch.
  */
 export function isSwitchField(field: WorktreeSettingsField): boolean {
-  return SWITCHES.includes(field)
+  return Object.hasOwn(SWITCH_DEFAULTS, field)
+}
+
+/**
+ * The schema default one switch resolves to when nothing is stored.
+ * @param field - the switch field being read.
+ * @returns the default the Host's schema would apply.
+ */
+function switchDefault(field: WorktreeSettingsField): boolean {
+  return SWITCH_DEFAULTS[field] ?? false
 }
 
 /**
@@ -56,7 +69,7 @@ export function isSwitchField(field: WorktreeSettingsField): boolean {
  * @returns the draft text.
  */
 export function formatSetting(field: WorktreeSettingsField, value: unknown): string {
-  if (isSwitchField(field)) return typeof value === 'boolean' ? String(value) : String(SWITCH_DEFAULT)
+  if (isSwitchField(field)) return typeof value === 'boolean' ? String(value) : String(switchDefault(field))
   return value === undefined ? '' : String(value)
 }
 
@@ -76,7 +89,7 @@ export function parseSetting(field: WorktreeSettingsField, text: string): string
   if (isSwitchField(field)) {
     if (text === 'true') return true
     if (text === 'false') return false
-    return text === '' ? SWITCH_DEFAULT : undefined
+    return text === '' ? switchDefault(field) : undefined
   }
   const number = Number(text)
   return text.trim() !== '' && Number.isSafeInteger(number) && number > 0 ? number : undefined

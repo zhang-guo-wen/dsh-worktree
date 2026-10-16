@@ -71,6 +71,16 @@ export const DEFAULT_FILE_GUARD = true
 export const DEFAULT_DENY_DESTRUCTIVE_COMMANDS = true
 
 /**
+ * Whether a new session starts inside a worktree without being asked.
+ *
+ * Off by default. Turning it on spends the new-session control before anyone
+ * touches it: the first blank session in a repository becomes a checkout, which
+ * is a Git write and a new branch, so a deployment that wants it says so — and a
+ * deployment that does not must not discover it after the fact.
+ */
+export const DEFAULT_NEW_SESSION_WORKTREE = false
+
+/**
  * Directory under the user's home that holds every workspace's protected files.
  *
  * Named for what it is rather than for "snapshots": the contents are ordinary

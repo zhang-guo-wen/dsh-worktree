@@ -168,6 +168,21 @@ export function WorktreeSettingsSection(props: WorktreeSettingsSectionProps) {
           {gitLine}
         </p>
         <Row
+          id="worktree-new-session"
+          title={t('settings.newSession.label')}
+          description={t('settings.newSession.hint')}
+          control={(
+            <Switch
+              // The schema default is off, so only an explicit `true` means on.
+              checked={state.newSessionWorktree.text === 'true'}
+              label={t('settings.newSession.label')}
+              disabled={readOnly}
+              className={css.switchHit}
+              onChange={(next) => { props.edit('newSessionWorktree', String(next)) }}
+            />
+          )}
+        />
+        <Row
           id="worktree-nested"
           title={t('settings.nested.label')}
           description={t('settings.nested.hint')}

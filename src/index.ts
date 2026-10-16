@@ -29,7 +29,8 @@ import type { Context, Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
   DEFAULT_AGENTS_DIRECTORY, DEFAULT_DENY_DESTRUCTIVE_COMMANDS, DEFAULT_FILE_GUARD, DEFAULT_GIT_TIMEOUT_MS,
-  DEFAULT_NESTED_REPOSITORIES, DEFAULT_NESTED_SCAN_DEPTH, DEFAULT_WORKTREE_LAYOUT, FILE_GUARD_DIRECTORY_SEGMENTS,
+  DEFAULT_NESTED_REPOSITORIES, DEFAULT_NESTED_SCAN_DEPTH, DEFAULT_NEW_SESSION_WORKTREE, DEFAULT_WORKTREE_LAYOUT,
+  FILE_GUARD_DIRECTORY_SEGMENTS,
   SETTINGS_NAMESPACE,
   type FileGuardOptions, type NestedRepositoryPolicy, type WorktreeLayout,
 } from './policy.ts'
@@ -127,6 +128,16 @@ export interface Config {
    * negative costs unprotected data.
    */
   denyDestructiveCommands: Volatile<boolean>
+  /**
+   * Whether a new session starts inside a worktree without being asked.
+   *
+   * Off by default ({@link DEFAULT_NEW_SESSION_WORKTREE}). On, the browser
+   * half's new-session control is spent on its own: the first blank session in a
+   * repository becomes a checkout and the session moves into it. The Host only
+   * stores and serves the choice — creating the checkout is the browser half's
+   * call to the route.
+   */
+  newSessionWorktree: Volatile<boolean>
 }
 
 /**
@@ -149,6 +160,7 @@ export const Config = z.object({
   removeOnSessionArchive: z.boolean().default(true),
   fileGuard: z.boolean().default(DEFAULT_FILE_GUARD).volatile(),
   denyDestructiveCommands: z.boolean().default(DEFAULT_DENY_DESTRUCTIVE_COMMANDS).volatile(),
+  newSessionWorktree: z.boolean().default(DEFAULT_NEW_SESSION_WORKTREE).volatile(),
 })
 
 /**

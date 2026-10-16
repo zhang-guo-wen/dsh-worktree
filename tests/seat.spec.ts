@@ -296,3 +296,54 @@ describe('worktree seat', () => {
     expect(seat.store.getSnapshot().error).toMatch(/working directory/)
   })
 })
+
+/**
+ * The deployment's new-session default.
+ *
+ * With `newSessionWorktree` on, the seat is spent before anyone clicks it: the
+ * first blank Session in a repository becomes a checkout. The seat itself is
+ * what decides whether it may be spent, so these cases pin the three refusals —
+ * the policy is off, the Session was already answered, and the control is not
+ * offered — and that only a spend marks the Session.
+ */
+describe('the new-session default', () => {
+  it('spends the seat once for a Session the policy names', async () => {
+    stubRoute(() => ({ ok: true, body: { worktrees: [checkout('/repo', 'main', true)] } }))
+    const seat = new WorktreeSeatController()
+    await seat.load('/repo')
+
+    expect(seat.autoStart('s-1', true)).toBe(true)
+    expect(seat.store.getSnapshot().enabled).toBe(true)
+    // The second answer is what keeps a refusal the Host reported on the control
+    // instead of becoming a retry on every catalog change.
+    expect(seat.autoStart('s-1', true)).toBe(false)
+  })
+
+  it('leaves the seat alone while the policy is off, and can spend it once it is on', async () => {
+    stubRoute(() => ({ ok: true, body: { worktrees: [checkout('/repo', 'main', true)] } }))
+    const seat = new WorktreeSeatController()
+    await seat.load('/repo')
+
+    expect(seat.autoStart('s-1', false)).toBe(false)
+    expect(seat.store.getSnapshot().enabled).toBe(false)
+    expect(seat.autoStart('s-1', true)).toBe(true)
+  })
+
+  it('offers nothing to spend where the control is not shown', async () => {
+    const seat = new WorktreeSeatController()
+    await seat.load(undefined)
+    expect(seat.autoStart('s-1', true)).toBe(false)
+
+    // A Session already inside a checkout made that choice when it was created.
+    stubRoute(() => ({
+      ok: true,
+      body: { worktrees: [checkout('/repo', 'main', true), checkout('/repo/.agents/wt-x', 'dsh/wt-x')] },
+    }))
+    await seat.load('/repo/.agents/wt-x')
+    expect(seat.autoStart('s-2', true)).toBe(false)
+    // Nothing was spent, so a Session whose control IS offered can still be
+    // answered later — a refusal is about where the seat stands, not about it.
+    await seat.load('/repo')
+    expect(seat.autoStart('s-2', true)).toBe(true)
+  })
+})

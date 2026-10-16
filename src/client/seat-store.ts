@@ -77,6 +77,15 @@ export class WorktreeSeatController {
   /** Only the newest probe may publish, so a late reply cannot revive a stale answer. */
   private probeGeneration = 0
 
+  /**
+   * Sessions this seat already spent on its own, keyed by session id.
+   *
+   * Per Session rather than per directory: returning to a blank Session the
+   * deployment already answered must not answer it a second time, and a refusal
+   * the Host reported is a result for that Session, not something to retry.
+   */
+  private readonly autoStarted = new Set<string>()
+
   /** The directory the newest probe resolved; the staged choice applies to it. */
   private probedCwd: string | undefined
 
@@ -182,6 +191,28 @@ export class WorktreeSeatController {
    */
   setEnabled(enabled: boolean): void {
     this.set({ enabled, error: null, skipped: [] })
+  }
+
+  /**
+   * Spend the seat when the deployment asks for a checkout without a click.
+   *
+   * The probe must have answered first: a seat that is not offered has no
+   * repository to create a checkout in, and one already inside a checkout holds
+   * a choice that can no longer change. A Session this seat already spent — or
+   * already tried to spend — is left alone, so a refusal stays on the control
+   * instead of becoming a retry on every catalog change.
+   * @param sessionId - the Session on screen.
+   * @param enabledByDefault - the live policy asking for the checkout.
+   * @returns true when the caller should spend the seat by starting it.
+   */
+  autoStart(sessionId: string, enabledByDefault: boolean): boolean {
+    if (!enabledByDefault) return false
+    if (this.autoStarted.has(sessionId)) return false
+    const state = this.store.getSnapshot()
+    if (!state.visible || state.isolated || state.started !== null || state.creating) return false
+    this.autoStarted.add(sessionId)
+    this.set({ enabled: true, error: null, skipped: [] })
+    return true
   }
 
   /**

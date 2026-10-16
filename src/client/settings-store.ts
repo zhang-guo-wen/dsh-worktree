@@ -15,6 +15,7 @@ import {
 
 /** The live policy fields exposed by this page. */
 export interface WorktreeSettings {
+  newSessionWorktree?: boolean
   nestedRepositories?: string
   defaultPath?: string
   nestedScanDepth?: number
@@ -24,6 +25,7 @@ export interface WorktreeSettings {
 
 /** What the worktree settings page renders. */
 export interface WorktreeSettingsState extends SettingsFormShell {
+  newSessionWorktree: SettingsFieldState
   nestedRepositories: SettingsFieldState
   defaultPath: SettingsFieldState
   nestedScanDepth: SettingsFieldState
@@ -79,6 +81,7 @@ export class WorktreeSettingsController {
       invalid: [...this.drafts].some(([field, text]) => parseSetting(field, text) === undefined),
       saving: this.saving,
       failed: this.failedFields.size > 0,
+      newSessionWorktree: this.field('newSessionWorktree'),
       nestedRepositories: this.field('nestedRepositories'),
       defaultPath: this.field('defaultPath'),
       nestedScanDepth: this.field('nestedScanDepth'),

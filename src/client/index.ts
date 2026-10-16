@@ -20,6 +20,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+// The settings form's scope type, shared with the page controller below.
+import type { SettingsFormScope } from '@deepseek-ai/dsh-client-ui-primitives'
 // Type-only: pulls the locale service merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 // Type-only: the slot registry Context merge (ctx.slots) and slot types.
@@ -48,7 +50,7 @@ import { request, type CheckoutProbeResult } from './api.ts'
 import { WorktreeSeatController } from './seat-store.ts'
 import { openWithDraft } from './draft-transfer.ts'
 import { WorktreeSettingsSection } from './SettingsSection.tsx'
-import { WorktreeSettingsController } from './settings-store.ts'
+import { WorktreeSettingsController, type WorktreeSettings } from './settings-store.ts'
 import { SETTINGS_NAMESPACE } from '../policy.ts'
 import { en, NS, zh, type WorktreeCopyKey } from './locales.ts'
 
@@ -80,8 +82,11 @@ export function apply(ctx: Context): void {
 
   // The policy page exists while the Host serves this plugin's entry, so a
   // deployment that runs the tools without a settings document shows no page
-  // whose writes nothing would accept.
-  const settings = new WorktreeSettingsController(ctx.configForms.get(SETTINGS_NAMESPACE))
+  // whose writes nothing would accept. The scope is named rather than passed
+  // inline: the seat below reads the same live document, so both surfaces
+  // answer from one subscription.
+  const settingsScope: SettingsFormScope<WorktreeSettings> = ctx.configForms.get(SETTINGS_NAMESPACE)
+  const settings = new WorktreeSettingsController(settingsScope)
   ctx.effect(() => () => { settings.dispose() }, 'ui-worktree: settings form subscription')
   ctx.effect(() => ctx.configForms.whileServed([SETTINGS_NAMESPACE], () => ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
@@ -165,17 +170,16 @@ export function apply(ctx: Context): void {
       return row?.blank === true
     }
 
-    const evaluate = (sessionId: string): void => {
-      const editableNow = isEditable(sessionId)
-      editable.set(editableNow)
-      // A checkout this seat created belongs to the Session that asked for it;
-      // arriving at another Session must not be answered with that Session.
-      if (sessionId !== shown) {
-        shown = sessionId
-        controller.resetStart()
-      }
-      void controller.load(editableNow ? cwdOf(sessionId) : undefined)
-    }
+    /**
+     * Whether the deployment asks for a checkout without a click.
+     *
+     * Read live rather than captured: the settings page edits this while the
+     * plugin runs, and the next blank Session is what the new answer applies to.
+     * An absent value is the schema's own default, which is off.
+     * @returns true when a new Session should start in a worktree on its own.
+     */
+    const startsInWorktree = (): boolean =>
+      settingsScope.getSnapshot().value?.newSessionWorktree === true
 
     /**
      * Show the Session the Host started in the new checkout, carrying the draft
@@ -209,6 +213,34 @@ export function apply(ctx: Context): void {
         () => { scope.uiWorkspace.openSession(sessionId as SessionId) })
     }
 
+    /**
+     * Spend the seat: start the Session in a new checkout and open it.
+     *
+     * The Session on screen travels with the call, so a switch during the Git
+     * run cannot move the wrong draft.
+     */
+    const startSeat = (): void => {
+      const sourceId = shown
+      void controller.start(sessionId => openStarted(sessionId, sourceId))
+    }
+
+    const evaluate = (sessionId: string): void => {
+      const editableNow = isEditable(sessionId)
+      editable.set(editableNow)
+      // A checkout this seat created belongs to the Session that asked for it;
+      // arriving at another Session must not be answered with that Session.
+      if (sessionId !== shown) {
+        shown = sessionId
+        controller.resetStart()
+      }
+      void controller.load(editableNow ? cwdOf(sessionId) : undefined).then(() => {
+        // The deployment may ask for the checkout without a click. The probe has
+        // answered by now, and the seat decides the rest: once per Session, and
+        // only where the control is actually offered.
+        if (editableNow && controller.autoStart(sessionId, startsInWorktree())) startSeat()
+      })
+    }
+
     const injected = (): WorktreeChipInjected => ({
       hooks: { worktreeSeat: controller.store, editable },
       load: async (sessionId: string) => {
@@ -230,10 +262,7 @@ export function apply(ctx: Context): void {
         // Checking the control is the whole action: it starts the session
         // immediately, because the alternative is a second button on a row that
         // has room for one control.
-        if (enabled) {
-          const sourceId = shown
-          void controller.start(sessionId => openStarted(sessionId, sourceId))
-        }
+        if (enabled) startSeat()
       },
     })
 
