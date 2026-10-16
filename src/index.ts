@@ -21,14 +21,20 @@
  * @module @guowenzhang/dsh-worktree
  */
 
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import type { Context, Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  DEFAULT_AGENTS_DIRECTORY, DEFAULT_GIT_TIMEOUT_MS, DEFAULT_NESTED_REPOSITORIES, DEFAULT_NESTED_SCAN_DEPTH,
-  DEFAULT_WORKTREE_LAYOUT, SETTINGS_NAMESPACE, type NestedRepositoryPolicy, type WorktreeLayout,
+  DEFAULT_AGENTS_DIRECTORY, DEFAULT_DENY_DESTRUCTIVE_COMMANDS, DEFAULT_FILE_GUARD, DEFAULT_GIT_TIMEOUT_MS,
+  DEFAULT_NESTED_REPOSITORIES, DEFAULT_NESTED_SCAN_DEPTH, DEFAULT_WORKTREE_LAYOUT, FILE_GUARD_DIRECTORY_SEGMENTS,
+  SETTINGS_NAMESPACE,
+  type FileGuardOptions, type NestedRepositoryPolicy, type WorktreeLayout,
 } from './policy.ts'
 import { WorktreeService, type WorktreeServiceOptions } from './service.ts'
 import { installArchiveCleanup } from './archive-cleanup.ts'
+import { defineBackupTool } from './backup-tool.ts'
+import { installFileGuard } from './file-guard.ts'
 import { registerRoute } from './route.ts'
 // Pulls the `ctx.worktree` service declaration into this program's type face.
 import type {} from './types.ts'
@@ -101,6 +107,22 @@ export interface Config {
    * applies to an explicit request.
    */
   removeOnSessionArchive: boolean | undefined
+  /**
+   * Whether a file is copied out of the session's reach before a tool may
+   * change it. Off by default: switching it on is what starts writing to the
+   * user's home directory, so it is a choice rather than a surprise.
+   *
+   * Backups belong to the session that asked for them and are deleted when that
+   * session is archived.
+   */
+  fileGuard: Volatile<boolean>
+  /**
+   * Whether a shell command that looks like it deletes files is refused so the
+   * model declares its targets first. On by default: a deletion cannot be
+   * recovered once it runs, so a false positive costs one retry while a false
+   * negative costs unprotected data.
+   */
+  denyDestructiveCommands: Volatile<boolean>
 }
 
 /**
@@ -121,6 +143,8 @@ export const Config = z.object({
   gitTimeoutMs: z.number().min(0).default(DEFAULT_GIT_TIMEOUT_MS).volatile(),
   startSessionRoute: z.boolean(),
   removeOnSessionArchive: z.boolean().default(true),
+  fileGuard: z.boolean().default(DEFAULT_FILE_GUARD).volatile(),
+  denyDestructiveCommands: z.boolean().default(DEFAULT_DENY_DESTRUCTIVE_COMMANDS).volatile(),
 })
 
 /**
@@ -135,6 +159,22 @@ function liveOptions(config: Config): WorktreeServiceOptions {
     agentsDirectory: config.agentsDirectory.get(),
     nestedRepositories: config.nestedRepositories.get(),
     nestedScanDepth: config.nestedScanDepth.get(),
+  }
+}
+
+/**
+ * The deployment's file-protection policy.
+ *
+ * Only the directory is fixed at activation, because the user's home is a
+ * deployment fact rather than a per-session one. The shell policy is read from
+ * the live configuration, so a document update applies to the running guard.
+ * @param config - the plugin's resolved configuration.
+ * @returns the options the guard consumes.
+ */
+function guardOptions(config: Config): FileGuardOptions {
+  return {
+    directory: join(homedir(), ...FILE_GUARD_DIRECTORY_SEGMENTS),
+    denyDestructiveCommands: config.denyDestructiveCommands.get(),
   }
 }
 
@@ -155,6 +195,13 @@ export function apply(ctx: Context, config: Config): void {
       service.reconfigure(liveOptions(config))
     }), 'dsh-worktree: live policy')
   })
-  if (config.removeOnSessionArchive ?? true) installArchiveCleanup(ctx, service)
+  // The guard is built first: the archive cleanup needs it to delete a session's
+  // backups, and cleanup is installed even when the guard is off so a session
+  // protected before the switch was turned off still gets its directory removed.
+  const guard = config.fileGuard.get() ? installFileGuard(ctx, guardOptions(config)) : undefined
+  if (guard !== undefined) {
+    ctx.effect(() => ctx.tools.register(defineBackupTool(guard)), 'dsh-worktree: declare files to protect')
+  }
+  if (config.removeOnSessionArchive ?? true) installArchiveCleanup(ctx, service, guard)
   if (config.startSessionRoute ?? true) registerRoute(ctx, service)
 }

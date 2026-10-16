@@ -50,3 +50,43 @@ export const DEFAULT_NESTED_REPOSITORIES: NestedRepositoryPolicy = 'none'
 export const DEFAULT_NESTED_SCAN_DEPTH = 1
 /** Default bound on one git invocation. */
 export const DEFAULT_GIT_TIMEOUT_MS = 60_000
+
+/**
+ * Whether files are copied out of the workspace before a tool may change them.
+ *
+ * On by default: a protection nobody switched on protects nothing. The cost is
+ * bounded by the files actually touched — one copy each, kept for the session's
+ * lifetime and deleted when it is archived — so a default-on deployment
+ * accumulates nothing it does not use.
+ */
+export const DEFAULT_FILE_GUARD = true
+
+/**
+ * Whether a shell command that looks like it deletes files is refused.
+ *
+ * On by default. A deletion cannot be recovered once it runs, and the refusal
+ * tells the model what to do instead, so the cost of a false positive is one
+ * retry while the cost of a false negative is unprotected loss.
+ */
+export const DEFAULT_DENY_DESTRUCTIVE_COMMANDS = true
+
+/**
+ * Directory under the user's home that holds every workspace's protected files.
+ *
+ * Named for what it is rather than for "snapshots": the contents are ordinary
+ * files in the workspace's own layout, kept so a change can be undone.
+ */
+export const FILE_GUARD_DIRECTORY_SEGMENTS = ['.agents', 'file-guard'] as const
+
+/**
+ * The deployment's file-protection policy, as the guard consumes it.
+ *
+ * There is no retention field and no clock: one copy is kept per file forever,
+ * so neither a retention sweep nor a timestamped name exists to configure.
+ */
+export interface FileGuardOptions {
+  /** Root directory holding every workspace's protected files. */
+  readonly directory: string
+  /** Whether to refuse a shell command that looks like it deletes files. */
+  readonly denyDestructiveCommands: boolean
+}
