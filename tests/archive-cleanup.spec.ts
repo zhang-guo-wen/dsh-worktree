@@ -53,7 +53,6 @@ async function mount(options: {
   inspect?: WorktreeService['inspectLinkedCheckout']
   remove?: WorktreeService['remove']
   guard?: FileGuard
-  sweepIntervalMs?: number
 }) {
   const state = registry(options.workspaces, options.archived)
   const removed: Array<{ cwd: string; path: string }> = []
@@ -74,8 +73,28 @@ async function mount(options: {
       })
     },
   }).await()
-  installArchiveCleanup(ctx, service, options.guard, { sweepIntervalMs: options.sweepIntervalMs })
+  installArchiveCleanup(ctx, service, options.guard, { removeCheckouts: true })
   return { ctx, state, removed }
+}
+
+/**
+ * One durable write of the workspace registry's global singleton, as the
+ * storage layer announces it.
+ *
+ * The archive set travels inside the snapshot, but the listener reads the
+ * registry rather than this value, so the shape here only has to be the real
+ * one — whatever the storage layer passed through.
+ * @param archived - the archived session ids after the write.
+ * @returns the event payload the cleanup listens for.
+ */
+function archiveWrite(archived: readonly string[]) {
+  return {
+    domain: 'workspace',
+    table: '',
+    key: '',
+    operation: 'put' as const,
+    value: { initialized: true, workspaceIds: [], archivedSessionIds: [...archived] },
+  }
 }
 
 /**
@@ -284,52 +303,30 @@ describe('archive outcome record', () => {
 })
 
 /**
- * The archives nothing reported.
+ * The archives no notification reports.
  *
  * `workspace/session-stop` reaches this module only when an archive stops
- * running work. An idle session's archive — the sidebar's own action — has to be
- * found by comparing the durable archive set with what this process already
- * cleaned up, which is what the sweep does. The comparison is deliberately not
- * retroactive: the set a host starts with is recorded as already handled.
+ * running work. A plain archive — the sidebar's own action — dispatches nothing,
+ * but it does write the registry's global singleton, and the storage layer
+ * announces that write, so the cleanup runs on `domain/changed`. The arrival
+ * test is deliberately not retroactive: the set a host starts with is recorded
+ * as already handled.
  */
-describe('sessions archived without a notification', () => {
-  it('leaves a session archived before this host started alone', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-archive-sweep-'))
+describe('archives the workspace registry does not announce', () => {
+  it('cleans up a session the moment its archive is durable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-archive-event-'))
     try {
       const guard = await protectedFile(root, 's1')
-
-      // The archive happened while no host was watching. Deleting its backups
-      // now would carry out an archive this process never saw.
-      const { removed } = await mount({
-        workspaces: [{ id: 'w1', path: 'C:/repo-wt', sessionIds: ['s1'] }],
-        archived: ['s1'],
-        sessions: { s1: { header: { cwd: 'C:/repo-wt' } } },
-        guard,
-        sweepIntervalMs: 5,
-      })
-
-      await new Promise(resolve => { setTimeout(resolve, 40) })
-
-      expect(await backupDirectories(join(root, 'guard'))).toHaveLength(1)
-      expect(removed).toEqual([])
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  })
-
-  it('ends the backups and the checkout of a session archived while this host runs', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-archive-sweep-'))
-    try {
-      const guard = await protectedFile(root, 's1')
-      const { state, removed } = await mount({
+      const { ctx, state, removed } = await mount({
         workspaces: [{ id: 'w1', path: 'C:/repo-wt', sessionIds: ['s1'] }],
         archived: [],
         sessions: { s1: { header: { cwd: 'C:/repo-wt' } } },
         guard,
-        sweepIntervalMs: 5,
       })
 
+      // The sidebar's own archive: no stop notification, one durable write.
       state.archivedSessionIds.push('s1')
+      ctx.emit('domain/changed', archiveWrite(state.archivedSessionIds))
 
       await vi.waitFor(async () => expect(await backupDirectories(join(root, 'guard'))).toEqual([]))
       await vi.waitFor(() => expect(removed).toHaveLength(1))
@@ -339,21 +336,46 @@ describe('sessions archived without a notification', () => {
     }
   })
 
-  it('leaves a session that was never archived alone', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-archive-sweep-'))
+  it('leaves a session archived before this host started alone', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-archive-event-'))
     try {
       const guard = await protectedFile(root, 's1')
-      const { removed } = await mount({
+      // The archive happened while no host was watching. Announcing it again —
+      // which any later registry write does — must not delete its backups: that
+      // would carry out an archive this process never saw.
+      const { ctx, state, removed } = await mount({
+        workspaces: [{ id: 'w1', path: 'C:/repo-wt', sessionIds: ['s1'] }],
+        archived: ['s1'],
+        sessions: { s1: { header: { cwd: 'C:/repo-wt' } } },
+        guard,
+      })
+
+      ctx.emit('domain/changed', archiveWrite(state.archivedSessionIds))
+      await new Promise(resolve => { setTimeout(resolve, 20) })
+
+      expect(await backupDirectories(join(root, 'guard'))).toHaveLength(1)
+      expect(removed).toEqual([])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores a write that is not the archive set', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-archive-event-'))
+    try {
+      const guard = await protectedFile(root, 's1')
+      const { ctx, state, removed } = await mount({
         workspaces: [{ id: 'w1', path: 'C:/repo-wt', sessionIds: ['s1'] }],
         archived: [],
         sessions: { s1: { header: { cwd: 'C:/repo-wt' } } },
         guard,
-        sweepIntervalMs: 5,
       })
 
-      // Several intervals pass with nothing archived: a sweep must not treat a
-      // live session's copy as garbage.
-      await new Promise(resolve => { setTimeout(resolve, 40) })
+      state.archivedSessionIds.push('s1')
+      // Another domain, and a workspace record write: neither is the archive.
+      ctx.emit('domain/changed', { ...archiveWrite(['s1']), domain: 'settings' })
+      ctx.emit('domain/changed', { ...archiveWrite(['s1']), table: 'workspaces', key: 'w1' })
+      await new Promise(resolve => { setTimeout(resolve, 20) })
 
       expect(await backupDirectories(join(root, 'guard'))).toHaveLength(1)
       expect(removed).toEqual([])

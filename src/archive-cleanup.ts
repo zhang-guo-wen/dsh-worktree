@@ -14,15 +14,17 @@
  * the ordinary archive of an idle session — the sidebar's own action, and the
  * common case — writes the durable archive set and notifies nobody. Waiting for
  * an event that path never sends is what left an archived session's checkout and
- * backups on disk. The archive set itself is the durable record, so this module
- * also reconciles against it on a timer: every sweep ends the backups of any
- * session that arrived in the set since the previous one, and removes the
- * checkout that archive ended. One interval bounds how long a deleted session's
- * files can outlive it.
+ * backups on disk.
  *
- * **The sweep is not retroactive.** The archives already in the set when a host
- * starts stay untouched: they happened while that host was not watching, and
- * deleting them would carry out an archive this process never saw. Only an
+ * The write itself is announced, though: the registry's state lives in the
+ * `workspace` storage domain, and the storage layer emits `domain/changed` for
+ * every global write **after the backend acknowledged durability**. That is the
+ * archive notification this module was missing, so the cleanup is triggered by
+ * it and by `workspace/session-stop` — two listeners, no polling.
+ *
+ * **Neither trigger is retroactive.** The archives already in the set when a
+ * host starts stay untouched: they happened while that host was not watching,
+ * and deleting them would carry out an archive this process never saw. Only an
  * archive that arrives while the process runs is cleaned up — which is exactly
  * the case the missing notification used to drop.
  *
@@ -48,6 +50,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
+// Type-only: pulls the `domain/changed` event declaration into this program.
+// The storage layer announces every durable write through it, which is the
+// archive notification the workspace registry itself does not dispatch.
+import type {} from '@deepseek-ai/dsh-storage-domain'
 import type { WorktreeService } from './service.ts'
 import type { FileGuard } from './file-guard.ts'
 
@@ -103,13 +109,12 @@ export interface ArchiveCleanupOptions {
 }
 
 /**
- * How often the durable archive set is re-read for archives nothing reported.
+ * The storage domain whose global singleton carries the archive set.
  *
- * One interval bounds how long a deleted session's backups and checkout can
- * outlive it. The read is the registry's in-memory set, and a sweep that finds
- * nothing new does no I/O at all, so the cost is a comparison per interval.
+ * The registry opens it once (`workspaceDomainSpec`), so every durable write of
+ * `archivedSessionIds` is announced as a `domain/changed` put on this domain.
  */
-const ARCHIVE_SWEEP_INTERVAL_MS = 30_000
+const WORKSPACE_DOMAIN = 'workspace'
 
 /** Deployment choices this module's wiring takes. */
 export interface ArchiveCleanupWiring {
@@ -119,8 +124,6 @@ export interface ArchiveCleanupWiring {
    * are separate promises.
    */
   readonly removeCheckouts?: boolean
-  /** Interval between archive sweeps, in milliseconds. */
-  readonly sweepIntervalMs?: number
 }
 
 /** The narrow view of the workspace registry this module needs. */
@@ -145,13 +148,12 @@ interface SessionsLike {
 /**
  * Wire post-archive cleanup into one Host context.
  *
- * Registration rides the plugin's fiber: unloading the plugin removes the
- * notification, the sweep, and nothing else — no checkout is touched by
- * disposal.
+ * Registration rides the plugin's fiber: unloading the plugin removes the two
+ * listeners and nothing else — no checkout is touched by disposal.
  * @param ctx - the Host plugin context.
  * @param service - the worktree capability doing the removal.
  * @param guard - the file guard whose per-session backups end with the session.
- * @param wiring - whether checkouts are removed and how often the archive set is re-read.
+ * @param wiring - whether archived sessions' linked checkouts are removed.
  */
 export function installArchiveCleanup(
   ctx: Context,
@@ -160,9 +162,8 @@ export function installArchiveCleanup(
   wiring: ArchiveCleanupWiring = {},
 ): void {
   const removeCheckouts = wiring.removeCheckouts ?? true
-  const sweepIntervalMs = wiring.sweepIntervalMs ?? ARCHIVE_SWEEP_INTERVAL_MS
   let pending = Promise.resolve()
-  /** Serialize sweeps: two archives landing together must not race on one registry. */
+  /** Serialize cleanups: two archives landing together must not race on one registry. */
   const serialize = (work: () => Promise<void>): void => {
     pending = pending.then(work, work).catch((error: unknown) => {
       ctx.logger?.warn?.(`dsh-worktree: post-archive cleanup failed: ${String(error)}`)
@@ -175,20 +176,21 @@ export function installArchiveCleanup(
      *
      * Seeded with the set this process started with, which is deliberately not
      * its to clean: an archive that happened while no host was running is the
-     * user's own history, and a sweep that deleted it at the next start would
-     * act on a decision nobody made in this session. Only an archive that
-     * arrives while this process runs is acted on.
+     * user's own history, and deleting it when the next host starts would carry
+     * out a decision nobody made in that session. Only an archive that arrives
+     * while this process runs is acted on.
      */
     const handled = new Set<string>(registry.archivedSessionIds.map(String))
     /**
-     * Act on every archive that arrived since the previous sweep.
+     * End the backups — and the checkout — of every archive that arrived since
+     * the previous call.
      *
-     * Backups end with the session that took them, so an arrived archive loses
-     * them; the checkout that archive ended goes with them, because this process
-     * watched that archive happen. An id that left the set — unarchived — is
-     * forgotten, so a later archive of the same session is a new arrival.
+     * Backups end with the session that took them; the checkout goes with them,
+     * because this process watched that archive happen. An id that left the set —
+     * unarchived — is forgotten, so a later archive of the same session is a new
+     * arrival.
      */
-    const sweep = async (): Promise<void> => {
+    const cleanArrived = async (): Promise<void> => {
       const archived = new Set(registry.archivedSessionIds.map(String))
       for (const id of handled) if (!archived.has(id)) handled.delete(id)
       const arrived = [...archived].filter(id => !handled.has(id))
@@ -197,16 +199,25 @@ export function installArchiveCleanup(
       for (const id of arrived) await guard?.archive(id)
       await reconcile(scope, service, registry, arrived as SessionId[])
     }
-    scope.effect(() => {
-      const timer = setInterval(() => { serialize(sweep) }, sweepIntervalMs)
-      // A sweep must never be the reason a process stays alive.
-      timer.unref?.()
-      return () => { clearInterval(timer) }
-    }, 'dsh-worktree: clean up sessions archived without a notification')
+    scope.effect(
+      () => scope.on('domain/changed', (change) => {
+        // The archive write itself. A plain archive dispatches no
+        // `workspace/session-stop` — that notification belongs to stopping work —
+        // but it does write the registry's global singleton, and the domain
+        // announces every durable write. The payload is not read: the registry's
+        // own archive set is the authority on what is archived.
+        if (change.domain !== WORKSPACE_DOMAIN) return
+        if (change.operation !== 'put' || change.table !== '' || change.key !== '') return
+        serialize(cleanArrived)
+      }),
+      'dsh-worktree: clean up a session as soon as its archive is durable',
+    )
     scope.effect(
       () => scope.on('workspace/session-stop', ({ sessionId }: ArchiveCleanupOptions) => {
         // Read the archived set after the notification returns, so removal sees
-        // the set the archive just made durable.
+        // the set the archive just made durable. This leg still matters for
+        // stop-and-archive: it runs after the session's work was actually
+        // stopped, so a copy the dying turn made on its way out is swept too.
         if (removeCheckouts) serialize(() => reconcile(scope, service, registry, [sessionId]))
         // Backups belong to the session that asked for them, so the archive is
         // where they end. This runs whether or not a checkout was removed: the

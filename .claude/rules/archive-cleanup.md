@@ -10,23 +10,25 @@ paths:
 
 ## 归档清理（`src/archive-cleanup.ts`）
 
-**harness 没有"会话已归档"事件。** Workspace registry 只提供两处：`workspace/session-activity`（归档**准入**的 waterfall）与 `workspace/session-stop`（归档**落盘之后**发给各 provider 的通知，见 `packages/workspace/workspace/src/index.ts` 的 `archiveSession`）。后者时机正确，但 `archiveSession` **只在 `stopActivity: true` 时才 dispatch 它**。
+**registry 自己的事件里没有"会话已归档"。** Workspace registry 只提供两处：`workspace/session-activity`（归档**准入**的 waterfall）与 `workspace/session-stop`（归档**落盘之后**发给各 provider 的通知，见 `packages/workspace/workspace/src/index.ts` 的 `archiveSession`）。后者时机正确，但 `archiveSession` **只在 `stopActivity: true` 时才 dispatch 它**。
 
-界面两条归档路径因此行为不同：会话有活动时先归档失败 → 弹「停止并归档」→ `stopActivity: true` → 落盘 → `workspace/session-stop` → 本模块收到通知；**空闲会话（无活动、无需确认，也就是侧边栏直接归档的常见路径）走缺省归档，只写归档集合，谁都不通知**。
+界面两条归档路径因此行为不同：会话有活动时先归档失败 → 弹「停止并归档」→ `stopActivity: true` → 落盘 → `workspace/session-stop` → 本模块收到通知；**空闲会话（无活动、无需确认，也就是侧边栏直接归档的常见路径）走缺省归档，谁都不通知**。
 
-所以触发有两条腿，**缺一不可**：
+**但归档这次写入本身是被广播的。** registry 的状态存在 `workspace` 存储域的全局单例里（`workspaceDomainSpec`，`name: 'workspace'`），storage-domain 对**每一次落盘成功后的全局写入**都会 `ctx.emit('domain/changed', …)`（`packages/storage/storage-domain/src/domain.ts`），harness 自己的 `workspace-controller` 就是它的消费方。于是触发有两条腿，都无需轮询：
 
 | 触发 | 机制 | 覆盖 |
 |---|---|---|
-| `workspace/session-stop` | 通知到达即处理该 session id | 「停止并归档」，立即（不等一个周期） |
-| **周期对账（sweep）** | 每 `ARCHIVE_SWEEP_INTERVAL_MS`（30 s）重读 `workspaceRegistry.archivedSessionIds`，处理本进程还没处理过的 id | 空闲归档——只写集合、谁都不通知的那条路 |
+| `domain/changed` | `domain === 'workspace'` 且 `operation === 'put'` 且 `table === '' && key === ''`（全局单例）→ 读 `workspaceRegistry.archivedSessionIds` 对账 | **所有归档**，包括空闲归档；落盘后立即 |
+| `workspace/session-stop` | 通知到达即处理该 session id | 「停止并归档」：它在该会话的回合**真正停下之后**才到，能顺带扫掉垂死回合最后一刻留下的副本 |
 
-**对账不追溯（刻意如此）。** 进程启动时先把当时的归档集合**同步**灌进 `handled`：那时已经在集合里的归档发生在"没有宿主在看"的时候，删它等于替用户执行一次本进程没见过的归档。只有**运行期间新到**的 id 才被清理——也正是缺通知那条路丢掉的正是这种情况。所以：
+**领域事件的 payload 不读。** 它只当"归档集合可能变了"的触发器，权威数据仍取 `workspaceRegistry.archivedSessionIds`——这样只依赖域名单例这一件事（域名为 `'workspace'`、写入是全局 put），不依赖快照字段的结构。
 
-- **没有启动补扫**：历史归档的备份与 checkout 都不会被后来的宿主翻旧账；要清就由用户自己删。
+**不追溯（刻意如此，也没有任何定时补扫）。** 进程启动时把当时的归档集合灌进 `handled`：那时已在集合里的归档发生在"没有宿主在看"的时候，删它等于替用户执行一次本进程没见过的归档。只有**运行期间新到**的 id 才被清理。于是：
+
+- 历史归档的备份与 checkout 都不会被后来的宿主翻旧账；要清就用户自己删。
 - **取消归档会"复位"**：id 从集合里消失时从 `handled` 里忘掉，之后再次归档按新归档处理。
 
-sweep 的动作：集合里的新 id 逐个 `guard.archive(id)`（备份属于发起它的会话，归档即结束），并对同一批 id 调 `reconcile`（删该次归档结束掉的 checkout）。
+新到 id 的动作：逐个 `guard.archive(id)`（备份属于发起它的会话，归档即结束），并对同一批 id 调 `reconcile`（删该次归档结束掉的 checkout）。
 
 一次 reconcile 的判定链（`reconcile` → `discard`）：
 
@@ -37,6 +39,6 @@ sweep 的动作：集合里的新 id 逐个 `guard.archive(id)`（备份属于�
 5. `service.remove({ cwd: repositoryRoot, path })`：脏 checkout 由服务自己的 `assertRemovable` 拒绝，本模块**不传 force**——拒绝原因写进日志，checkout 原样保留。
 6. 成功后 `workspaceRegistry.delete(workspace.id)` 摘掉工作区记录。
 
-三条不变量：**不拦截归档**（只订阅通知与读集合，失败全部降级为日志）；**不丢工作**（脏目录一律保留）；**并发串行**（通知与 sweep 共用同一条 promise 链；`setInterval` 用 `unref()`，绝不让 sweep 拖住进程退出）。
+三条不变量：**不拦截归档**（只订阅事件与读集合，失败全部降级为日志）；**不丢工作**（脏目录一律保留）；**并发串行**（两条触发腿共用同一条 promise 链，两个归档同时到达不会在一个 registry 上打架）。
 
 `removeOnSessionArchive` 只决定 **checkout** 删不删；备份的归档清理永远安装（`installArchiveCleanup` 无条件调用）。同理 `fileGuard` 关掉时仍会构造一个 guard 对象供清理使用——只是不再注册保护与工具。
