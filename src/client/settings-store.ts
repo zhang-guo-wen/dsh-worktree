@@ -25,6 +25,12 @@ export interface WorktreeSettings {
 
 /** What the worktree settings page renders. */
 export interface WorktreeSettingsState extends SettingsFormShell {
+  /**
+   * How many writes the Host has refused. A refused field stays failed until a
+   * later write for it is accepted, so the boolean alone cannot tell the page
+   * that a second edit was refused too; the count reports every one of them.
+   */
+  failedSeq: number
   newSessionWorktree: SettingsFieldState
   nestedRepositories: SettingsFieldState
   defaultPath: SettingsFieldState
@@ -49,6 +55,7 @@ export class WorktreeSettingsController {
   private readonly unsubscribe: () => void
   private saving = false
   private readonly failedFields = new Set<Field>()
+  private failedWrites = 0
   private disposed = false
 
   constructor(private readonly scope: SettingsFormScope<WorktreeSettings>) {
@@ -81,6 +88,7 @@ export class WorktreeSettingsController {
       invalid: [...this.drafts].some(([field, text]) => parseSetting(field, text) === undefined),
       saving: this.saving,
       failed: this.failedFields.size > 0,
+      failedSeq: this.failedWrites,
       newSessionWorktree: this.field('newSessionWorktree'),
       nestedRepositories: this.field('nestedRepositories'),
       defaultPath: this.field('defaultPath'),
@@ -134,6 +142,7 @@ export class WorktreeSettingsController {
             if (this.drafts.get(field) === text && !this.pending.has(field)) this.drafts.delete(field)
           }
         } else {
+          this.failedWrites += 1
           for (const field of batch.keys()) this.failedFields.add(field)
         }
         // Only newer edits are sent again. A refused batch never retries in a

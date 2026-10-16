@@ -13,11 +13,18 @@
  *
  * Every valid edit saves automatically through the shared settings scope.
  * There is no manual-save footer, and leaving the page never discards a write.
+ *
+ * The two action results — a write the Host refused, and a draft it would
+ * reject — are reported in the Host's floating banner instead of at the page's
+ * own end, which two filled cards and the settings modal's scroll container put
+ * out of sight. What stays on the page is standing state: whether the entry is
+ * served, whether this deployment stores settings read-only, the Git line, and
+ * each row's hint.
  * @module @guowenzhang/dsh-worktree/client/SettingsSection
  */
 
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
-import { Switch } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { IconWarningOutlineRegular, Switch, Toast } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { WORKTREE_LAYOUTS } from '../policy.ts'
@@ -25,6 +32,22 @@ import { request, type GitCheckResult } from './api.ts'
 import { formLabels, type WorktreeCopyKey } from './locales.ts'
 import type { WorktreeSettingsFace } from './settings-store.ts'
 import css from './SettingsSection.module.css'
+
+/** A refused write names what broke and how to retry, so it holds the longest. */
+const FAILURE_HOLD_MS = 6000
+/** Rule feedback is shorter: the field stays marked while the text is wrong. */
+const INVALID_HOLD_MS = 4000
+
+/**
+ * One floating report. `seq` keys the mounted `Toast`, so the same copy
+ * reported again restarts its hold and fade instead of extending the cycle the
+ * previous one already ran.
+ */
+interface SettingsReport {
+  text: string
+  seq: number
+  kind: 'invalid' | 'failed'
+}
 
 /** Full component props. */
 export type WorktreeSettingsSectionProps =
@@ -136,6 +159,25 @@ export function WorktreeSettingsSection(props: WorktreeSettingsSectionProps) {
     return () => { active = false }
   }, [])
   const labels = formLabels(t)
+  // Both reports are events, not states, so an effect publishes each one: a
+  // report rendered from the condition would restart on every unrelated rerender
+  // and could never be dismissed. Neither effect keys on `t` or on the copy it
+  // reads, because a report is created with the copy current at that moment.
+  const [report, setReport] = useState<SettingsReport | null>(null)
+  const reportSeq = useRef(0)
+  // A refused field stays failed until a later write for it is accepted, so the
+  // count is what tells a second refusal apart from the first one still standing.
+  useEffect(() => {
+    if (state.failedSeq === 0) return
+    setReport({ text: labels.saveFailed, seq: ++reportSeq.current, kind: 'failed' })
+  }, [state.failedSeq])
+  // Declared after the refusal so that, when a keystroke and a refusal land in
+  // one commit, the banner carries the refusal: it is the graver answer, and the
+  // draft is marked `aria-invalid` for as long as the text is wrong.
+  useEffect(() => {
+    if (!state.nestedScanDepth.invalid) return
+    setReport({ text: t('settings.invalidNumber'), seq: ++reportSeq.current, kind: 'invalid' })
+  }, [state.nestedScanDepth.invalid])
   const readOnly = !state.writable
   // A row another row's answer has settled says so where it sits: an inert
   // control with no explanation is how a settings page teaches people that
@@ -158,11 +200,22 @@ export function WorktreeSettingsSection(props: WorktreeSettingsSectionProps) {
       : gitStatus.kind === 'missing' ? t('settings.gitMissing')
         : `${t('settings.gitFailed')}：${gitStatus.detail}`
 
+  // A refusal carries the Host's warning glyph and the longer hold; an invalid
+  // draft is rule feedback and takes the shorter one. `tone` stays unset: this
+  // page has no success to celebrate, because every valid edit already saved.
+  const reportProps = report?.kind === 'failed'
+    ? { icon: <IconWarningOutlineRegular />, holdMs: FAILURE_HOLD_MS }
+    : { holdMs: INVALID_HOLD_MS }
+
   return (
     <div className={css.page}>
       <h2 className={css.pageTitle}>{t('settings.title')}</h2>
       <p className={css.pageDescription}>{t('settings.description')}</p>
       {!state.writable ? <p className={css.notice} role="status">{labels.readOnly}</p> : null}
+      {/* The refused write also stays here, at the page's head: the banner that
+          reports it fades, so without this line the control would keep showing a
+          value that never reached the Host and nothing would say it did not. */}
+      {state.failed ? <p className={`${css.notice} ${css.saveFailed}`} role="status">{labels.saveFailed}</p> : null}
       <Card id="worktree" title={t('settings.worktree.cardTitle')}>
         <p className={`${css.gitStatus} ${gitStatus.kind === 'missing' || gitStatus.kind === 'failed' ? css.gitError : ''}`} role="status">
           {gitLine}
@@ -269,8 +322,16 @@ export function WorktreeSettingsSection(props: WorktreeSettingsSectionProps) {
           )}
         />
       </Card>
-      {state.nestedScanDepth.invalid ? <p className={css.failed} role="status">{t('settings.invalidNumber')}</p> : null}
-      {state.failed ? <p className={css.failed} role="status">{labels.saveFailed}</p> : null}
+      {report === null ? null : (
+        <Toast
+          key={report.seq}
+          text={report.text}
+          {...reportProps}
+          // Only the report still on screen is cleared: a newer one that replaced
+          // it has its own sequence and owns the banner now.
+          onDone={() => { setReport(current => current?.seq === report.seq ? null : current) }}
+        />
+      )}
     </div>
   )
 }

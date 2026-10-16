@@ -117,6 +117,26 @@ describe('worktree automatic saving', () => {
     expect(test.snapshot().value.defaultPath).toBe('home')
   })
 
+  it('counts every refused write, so a second refusal is reported again', async () => {
+    const test = setup()
+    expect(test.face.hooks.worktreeSettings.getSnapshot().failedSeq).toBe(0)
+    test.face.edit('defaultPath', 'home')
+    test.writes[0]!.finish(false)
+    await settle()
+    const first = test.face.hooks.worktreeSettings.getSnapshot().failedSeq
+    expect(first).toBe(1)
+    // A refused field stays failed until a later write for it is accepted, so
+    // the boolean alone cannot tell the page this second edit was refused too.
+    test.face.edit('defaultPath', 'sibling')
+    test.writes[1]!.finish(false)
+    await settle()
+    expect(test.face.hooks.worktreeSettings.getSnapshot().failedSeq).toBe(first + 1)
+    test.face.edit('defaultPath', 'home')
+    test.writes[2]!.finish()
+    await settle()
+    expect(test.face.hooks.worktreeSettings.getSnapshot()).toMatchObject({ failed: false, failedSeq: first + 1 })
+  })
+
   it('keeps a failed field warning while another field saves successfully', async () => {
     const test = setup()
     test.face.edit('defaultPath', 'home')

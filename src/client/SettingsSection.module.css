@@ -78,6 +78,12 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* A refused write is news the page has to keep: it carries the failure color
+   on the notice's own geometry, above both cards so no card length hides it. */
+.saveFailed {
+  color: var(--dsw-alias-state-error-primary);
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -228,14 +234,6 @@
   width: 104px;
   text-align: center;
   font-variant-numeric: tabular-nums;
-}
-
-/* The card above already carries the 12px gap to whatever follows it, so a
-   failure line sits in that gap rather than adding a second one. */
-.failed {
-  margin: 0 0 12px;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-state-error-primary);
 }
 
 /* The settings column's own narrow width, not the window's: below it a row

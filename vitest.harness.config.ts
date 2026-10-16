@@ -72,6 +72,12 @@ export default {
       // `dsh-client-store` re-exports from zustand, and the browser resolves
       // that through the module table; a Node spec resolves it here instead.
       { find: /^zustand$/, replacement: `${zustand}/index.js` },
+      // The settings spec mounts the page and reads the floating banner it
+      // renders, so it needs a renderer; the checkout installs one, and this
+      // resolves it there rather than pinning a second copy in this package.
+      // (`pnpmPackage` cannot name it: a store directory spells a scoped package
+      // with `+`, and its inner directory keeps the `@scope/name` spelling.)
+      { find: /^@testing-library\/react$/, replacement: join(harness, 'node_modules/@testing-library/react/dist/@testing-library/react.esm.js') },
     ],
   },
   test: {

@@ -16,7 +16,10 @@ const declarations = (selector: string) => {
 
 describe('worktree settings automatic-save surface', () => {
   it('has no manual-save/reset footer and never discards edits on page exit', () => {
-    expect(settings).not.toMatch(/props\.(save|resetField|discard)|css\.(footer|save|resetAll)/)
+    // The trailing boundary keeps the guard on save affordances: the page's own
+    // `css.saveFailed` is a status line for a write the Host refused, not a
+    // control that submits or discards anything.
+    expect(settings).not.toMatch(/props\.(save|resetField|discard)|css\.(footer|save|resetAll)\b/)
     expect(settings).toContain("props.edit('nestedRepositories'")
     expect(settings).toContain("props.edit('nestedScanDepth'")
     expect(settings).toContain("props.edit('defaultPath'")
