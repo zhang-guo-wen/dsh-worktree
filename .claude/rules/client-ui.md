@@ -1,9 +1,9 @@
 ---
 paths:
   - "src/client/**"
-  - "tests/seat.spec.ts"
-  - "tests/navigation.spec.ts"
-  - "tests/registration.spec.ts"
+# tests/seat.spec.ts / navigation.spec.ts / registration.spec.ts 有意不列：
+# 界面实现细节的自然触发面是 src/client/**；读测试文件由 build-test-release.md
+# 与 failure-modes.md 的 tests/** 覆盖，不必顺带灌入实现细节。
 ---
 
 > 覆盖什么、何时读：浏览器半边的实现细节——手机端断点、胶囊与 hero 行的对齐做法、草稿迁移的时序与回滚、设置页的列宽与触摸尺寸、以及「首条消息才创建」为什么做不到。改 `src/client/` 的任何界面或座位代码时读。
