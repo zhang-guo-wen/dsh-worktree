@@ -53,12 +53,16 @@ function Row(props: { id: string; title: string; description: string; control: R
  * The buttons are the same control the Appearance row uses — buttons carrying
  * `aria-pressed` — because this is a preference, not a set of panels: tablist
  * semantics with no panel to control would promise navigation that does not
- * exist.
+ * exist. The two properties the indicator derives its geometry from are
+ * plugin-private: the `--dsh-` prefix names Host-owned properties. The buttons
+ * carry `aria-pressed` rather than tab semantics, so the wrapper is a named
+ * `group`: a set of toggles with one name, not a tab list.
  * @param props - the row identity, its staged value, the labelled choices, and the write.
  * @returns the segmented control.
  */
 function ChoiceRow(props: {
   id: string
+  label: string
   text: string
   options: readonly { value: string; label: string }[]
   disabled: boolean
@@ -66,11 +70,11 @@ function ChoiceRow(props: {
 }) {
   const selected = props.options.findIndex(option => option.value === props.text)
   const indicator = {
-    '--dsh-choice-count': String(props.options.length),
-    '--dsh-choice-index': String(Math.max(selected, 0)),
+    '--worktree-choice-count': String(props.options.length),
+    '--worktree-choice-index': String(Math.max(selected, 0)),
   } as CSSProperties
   return (
-    <div className={css.choices} style={indicator}>
+    <div className={css.choices} style={indicator} role="group" aria-label={props.label}>
       <span aria-hidden="true" className={css.indicator} />
       {props.options.map(option => (
         <button
@@ -140,6 +144,10 @@ export function WorktreeSettingsSection(props: WorktreeSettingsSectionProps) {
             checked={createsNested}
             label={t('settings.nested.label')}
             disabled={readOnly}
+            // Layout class only: on a touch device the stylesheet grows this
+            // button's transparent hit area to 44px, because the primitive's
+            // 36x20 body is fixed and must stay as it is.
+            className={css.switchHit}
             // The switch is the whole choice: on means submodules and nested
             // repositories both come along, which is `all`; off means the
             // parent alone. The middle policy stays reachable from the
@@ -176,6 +184,7 @@ export function WorktreeSettingsSection(props: WorktreeSettingsSectionProps) {
         control={(
           <ChoiceRow
             id="worktree-default-path"
+            label={t('settings.layout.label')}
             text={state.defaultPath.text}
             options={WORKTREE_LAYOUTS.map(value => ({ value, label: t(`option.${value}` as WorktreeCopyKey) }))}
             disabled={readOnly}

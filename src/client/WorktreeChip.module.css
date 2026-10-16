@@ -45,9 +45,10 @@
   height: 24px;
   /* No border and no fill: the control belongs to the same ghost row as the
      chips beside it, and only the segment hovers and the hairline between the
-     two halves draw it. The radius still clips those fills to a rounded end. */
+     two halves draw it. The radius (half the pill's height) still clips those
+     fills to a rounded end. */
   border: none;
-  border-radius: 12px;
+  border-radius: var(--dsw-radius-md);
   background: transparent;
   overflow: hidden;
 }
@@ -102,6 +103,16 @@
   }
 }
 
+/* Touch targets reach the 44px minimum where the control sits in normal flow,
+   which is the mobile dock. The desktop placement is deliberately left at its
+   own height: the pill is floated onto the 28px hero chip row and a taller one
+   would climb out of that line. */
+@media (max-width: 600px) and (pointer: coarse) {
+  .pill {
+    height: 44px;
+  }
+}
+
 /* Branch segment: the menu trigger holding the base a new branch starts from. */
 .branch {
   display: inline-flex;
@@ -113,10 +124,7 @@
   border: none;
   background: transparent;
   color: var(--dsw-alias-label-primary);
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 20px;
+  font: var(--dsw-font-xs-strong-13);
   cursor: pointer;
 }
 
@@ -127,7 +135,7 @@
 
 .branch:disabled {
   cursor: default;
-  color: var(--dsw-alias-label-quaternary);
+  color: var(--dsw-alias-label-caption);
 }
 
 .branchIcon {
@@ -169,11 +177,9 @@
   gap: 6px;
   height: 100%;
   padding: 0 8px;
-  border-radius: 12px;
+  border-radius: var(--dsw-radius-md);
   color: var(--dsw-alias-label-primary);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 20px;
+  font: var(--dsw-font-xs-strong-13);
   white-space: nowrap;
   cursor: pointer;
 }
@@ -197,7 +203,7 @@
 }
 
 .seat input:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: 2px;
 }
 
@@ -208,10 +214,17 @@
   color: var(--dsw-alias-label-primary);
 }
 
+/* A refused start is the one state the segment's own text carries: the reason
+   stays in the tooltip, and the label says that the next click retries. */
+.seatFailed,
+.seatFailed .seatGlyph {
+  color: var(--dsw-alias-state-error-primary);
+}
+
 .seatIconError {
   flex: none;
   margin-right: 6px;
-  color: var(--dsw-alias-label-danger, #d33);
+  color: var(--dsw-alias-state-error-primary);
 }
 
 /*
@@ -222,5 +235,5 @@
 .seatIconWarn {
   flex: none;
   margin-right: 6px;
-  color: var(--dsw-alias-label-secondary, #666);
+  color: var(--dsw-alias-label-secondary);
 }

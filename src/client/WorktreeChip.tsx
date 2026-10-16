@@ -14,9 +14,10 @@
  *
  * The worktree half is one-way: checking it creates the checkout and starts the
  * session inside it, and nothing checks it back off. A failed start leaves it
- * unchecked with its reason, and the next check retries. A start that succeeded
- * with repositories left out says so instead: the checkout is a partial mirror,
- * and that is a fact about the new Session rather than a failure of this one.
+ * unchecked, says so on the segment, keeps the reason in its tooltip, and the
+ * next check retries. A start that succeeded with repositories left out says so
+ * instead: the checkout is a partial mirror, and that is a fact about the new
+ * Session rather than a failure of this one.
  * @module @guowenzhang/dsh-worktree/client/WorktreeChip
  */
 
@@ -90,6 +91,11 @@ export function WorktreeChip({
   // change: the branch it was created from, checked, with the branch it now
   // holds in the tooltip. The alternative is a checkout inside a checkout.
   const locked = state.isolated
+  // A refused start is reported on the segment itself, not only in its tooltip:
+  // the reason stays in the title, the text says the next click retries, and the
+  // colour marks the state. A start that succeeded but left repositories behind
+  // is not a failure, so its skip notice keeps precedence on the icon.
+  const failed = state.skipped.length === 0 && state.error !== null && !locked
   const baseLabel = state.base === 'HEAD' ? t('branch.head') : state.base
   const lockedHint = t('seat.applied', { branch: state.checkoutBranch })
   // A start that succeeded may still have left repositories behind, and the
@@ -137,7 +143,7 @@ export function WorktreeChip({
           )}
         />
         <span className={css.divider} aria-hidden="true" />
-        <label className={css.seat} title={skippedHint ?? (locked ? lockedHint : state.error ?? t('seat.hint'))}>
+        <label className={failed ? `${css.seat} ${css.seatFailed}` : css.seat} title={skippedHint ?? (locked ? lockedHint : state.error ?? t('seat.hint'))}>
           <input
             type="checkbox"
             checked={state.enabled || locked}
@@ -153,14 +159,13 @@ export function WorktreeChip({
           <span className={css.seatGlyph} aria-hidden="true">
             <IconProjectAddOutlineRegular size={14} />
           </span>
-          <span>{busy ? t('seat.creating') : t('seat.label')}</span>
+          <span>{busy ? t('seat.creating') : failed ? t('seat.failed') : t('seat.label')}</span>
         </label>
         {/* A partial mirror wears the warning colour while the refusal keeps the
             danger colour: one is what the checkout does not carry, the other is
             why there is no checkout at all. */}
         {state.skipped.length > 0 && <IconWarningOutlineRegular className={css.seatIconWarn} size={14} />}
-        {state.skipped.length === 0 && state.error !== null && !locked
-          && <IconWarningOutlineRegular className={css.seatIconError} size={14} />}
+        {failed && <IconWarningOutlineRegular className={css.seatIconError} size={14} />}
       </div>
     </div>
   )
