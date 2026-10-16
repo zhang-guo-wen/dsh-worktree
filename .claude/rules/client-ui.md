@@ -1,0 +1,18 @@
+---
+paths:
+  - "src/client/**"
+  - "tests/seat.spec.ts"
+  - "tests/navigation.spec.ts"
+  - "tests/registration.spec.ts"
+---
+
+> 覆盖什么、何时读：浏览器半边的实现细节——手机端断点、胶囊与 hero 行的对齐做法、草稿迁移的时序与回滚、设置页的列宽与触摸尺寸、以及「首条消息才创建」为什么做不到。改 `src/client/` 的任何界面或座位代码时读。
+
+## 界面实现细节
+
+- **手机端（≤ 600px）不做同一行悬浮对齐**：与宿主手机断点对齐，`conversation.input.dock` 恢复正常文档流，控件放在选择目录 / Agent 下一行、输入卡片上方，左侧 padding 为 20px。必须同时覆盖 `data-phase='hero'` 与嵌入式的 `data-content-phase='hero'`，将 row 的 `height` / `margin` 与 pill 的 `position` / `right` / `bottom` 全部重置。分支菜单 wrapper 允许收缩，长分支省略而 worktree 段不收缩；桌面布局保持下面的对齐方式。
+
+- **胶囊与 `选择工作区 / 模式` 同一行是靠 CSS 对齐的**：hero 那一行的两个槽（`conversation.hero.workspace`、`conversation.hero.agentPreset`）都是 single 槽，第三方插件没有可注册的座位。控件实际注册在 `conversation.input.dock`（order -10，排在最前），在 `data-phase='hero'` 时把这一行压成 0 高度、抵消 `.composerHero` 的 8px 行距，再用 `bottom: calc(100% + 4px)` 悬在输入卡片上方 4px 处、`right: 28px` 收在卡片右边缘内 12px——下边距取 4px，右边距取 12px 是因为卡片右上角是 22px 圆角，靠太近会像压在弧线上；12px 也正好是左侧 workspace 胶囊图标距卡片左边缘的距离。胶囊自身 24px 高、13px 字，和旁边 28px 的 ghost 胶囊同一种语言（无边框、无底色，靠 hover 填充和两段之间 12px 高的细分隔线成形），整体矮一档；`worktree` 一段是 `☐ <新建工作区图标> worktree`：图标跟在勾选框之后、紧贴文字，用的是 `IconProjectAddOutlineRegular`——侧边栏「添加工作区」那个图标，因为这个 check 的结果正是"这个 checkout 变成一个新工作区"；勾选框、图标、文字同在一个 label 里，点哪里都是勾选。两段的字都是 13px/500，和左侧 ghost 胶囊一致。两者顶边对齐。因此：非 hero 阶段它仍退回自己的一行（此时本来也不渲染），hero 行距若被上游改动，对齐会差一点；若别的插件往这个 dock 里注册了 order < -10 的条目，控件会贴到那条的上面。
+- **草稿必须跟着人走**：勾选后切到的是**另一个会话**，输入框属于页面而不属于会话，所以未发送的草稿（文字、引用、附件）要在导航之前搬到新会话那边，且**绝不发送**。顺序被 `openWithDraft`（`src/client/draft-transfer.ts`）固定为 **暂存 → 导航 → 清空原会话**，并且**从头到尾同时持有源会话与新会话两条 retain**：`sessions.retain` 是 `mainView` 引用之外唯一能阻止旧会话的输入 shell（连同它的附件）在导航换主引用时被销毁的东西。任一步失败都整体回滚（新会话清空、附件重新绑回源会话），错误经座位的 `error` 显示，**原草稿一字不丢**——包括导航已被拒绝、而后用户再点一次重试的情况。三个前置拒绝：源会话正在提交（`adjudicating` / `submitting`）、目标会话已有草稿、用户 git 还在跑时又切了会话（`shown !== sourceId`，此时连导航都不做，绝不把别人的草稿搬走）。跨会话搬草稿用的是宿主自己的做法（`ui-conversation` 的 `selectWorkspace`）：把语义快照交给 `setDraft`，由它连同引用芯片一起还原——公开签名把该参数收窄成 `string`，所以 `DraftInputFace` 显式写宽，不自行按偏移重插芯片。**语义快照是能力探测后才提交的**（`stageSnapshot`）：0.2.0-rc.x 宿主的 `setDraft` 只收纯文本，对象参数会在编辑器的 `text.replace` 处抛 `TypeError`——那是任何非空草稿都失败的原因（与图片无关）。探测用空语义快照：受支持的版本上是空操作（空文本早退），不支持的版本在碰状态前就抛错；回退时按宿主自己的搬法只传纯文本，引用芯片降级成它的剪贴板文字，附件照搬。芯片还原失败不是能力答案，仍走整体回滚。
+- **设置页是设置列，不是一级页面**：`SettingsSection.module.css` 的 `.page` 就地声明 `container: worktree-settings / inline-size` 并 `max-width: 760px`（与宿主 `ui-settings-plugin-inventory` 的 `.section` 同形），**不套** `calc(960px + …)`——设置弹窗内容区实际只有约 560px。标题、行、提示都是这一个 flex 列的子元素，共用同宽同左边界；行距仍由各行自己的 margin 表达，不加 `gap`。窄容器（`@container (max-width: 520px)`，取宿主设置页自己的紧凑阈值；760px 会在这个列的正常宽度上一直命中）下每行换行，控件落到说明下一行。触摸设备（`@media (pointer: coarse)`）把行抬到 44px：Switch 本体固定 36×20 不动，只用按钮上的透明 `::after` 扩大命中区；文本输入 16px/44px、分段选择每段 44px。
+- **"开关只在首条消息时才创建"做不到**：客户端 composer 的提交是 ui-conversation 内部的输入状态机，槽位里没有"提交前"钩子（`conversation.composer` 是 chain，选中者只能自己重写整个 composer；`conversation.composer.bar` 是 single，注册进去会把输入框顶掉），Host 侧也只有 `session/prompt` 这个 RPC；而 `SessionHeader.cwd` 又是创建时冻结的不可变字段。所以"先开关、首条消息再建"需要给 harness 加一个提交前扩展点，插件自身无法实现。当前行为是**点击即创建并切过去**。
