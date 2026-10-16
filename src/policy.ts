@@ -81,6 +81,17 @@ export const DEFAULT_DENY_DESTRUCTIVE_COMMANDS = true
 export const DEFAULT_NEW_SESSION_WORKTREE = false
 
 /**
+ * Whether the file-backup page is offered in the right sidebar.
+ *
+ * On by default, and for the same reason the protection itself is: copies are
+ * already being taken, so a deployment that keeps them silent hides the one
+ * surface that can put a file back. Off, the page is not registered at all —
+ * no tab type, no entry on the sidebar's guide page — which is the switch a
+ * user turns off to keep the sidebar to the pages they chose.
+ */
+export const DEFAULT_BACKUP_SIDEBAR = true
+
+/**
  * Directory under the user's home that holds every workspace's protected files.
  *
  * Named for what it is rather than for "snapshots": the contents are ordinary

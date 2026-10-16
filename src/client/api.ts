@@ -1,10 +1,11 @@
 /**
  * Browser client of the `/worktree/api` Host route.
  *
- * The route carries the one operation this plugin's UI needs that no generic
+ * The route carries the operations this plugin's UI needs that no generic
  * Remote exposes: create a checkout, register its project, and start a session
- * in it. Everything else (listing workspaces, opening a session) goes through
- * the composed client services.
+ * in it; list the files the guard copied before changing them, and put one
+ * copy back. Everything else (listing workspaces, opening a session) goes
+ * through the composed client services.
  * @module @guowenzhang/dsh-worktree/client/api
  */
 
@@ -87,6 +88,37 @@ export interface CheckoutProbeResult {
   readonly reason?: string
 }
 
+/** One protected file, as the Host lists it for the restore page. */
+export interface BackupEntry {
+  /**
+   * The copy's path below the session's backup directory; the key a restore
+   * sends back. The Host, not this half, decides where it lands.
+   */
+  readonly relative: string
+  /** Absolute path a restore writes back to. */
+  readonly path: string
+  /** The path to show: workspace-relative, or absolute for a file outside the workspace. */
+  readonly name: string
+  /** Absolute path of the copy, so the file on disk can be inspected directly. */
+  readonly backup: string
+  /** `modified` — the file differs from its copy; `deleted` — the file is gone. */
+  readonly state: 'modified' | 'deleted'
+}
+
+/** A successful `backups` result. */
+export interface BackupListResult {
+  /** The session's protected files whose content no longer matches its copy. */
+  readonly entries: BackupEntry[]
+}
+
+/** A successful `restore` result. */
+export interface RestoreResult {
+  /** Absolute path the copy was written to. */
+  readonly path: string
+  /** Bytes copied. */
+  readonly bytes: number
+}
+
 /** The result of one route call. */
 export type RouteResult<T> =
   | { readonly ok: true; readonly value: T }
@@ -99,7 +131,7 @@ export type RouteResult<T> =
  * @returns the parsed value, or the Host's refusal text.
  */
 export async function request<T>(
-  method: 'start' | 'list' | 'branches' | 'init' | 'check' | 'checkout',
+  method: 'start' | 'list' | 'branches' | 'init' | 'check' | 'checkout' | 'backups' | 'restore',
   body: Record<string, unknown>,
 ): Promise<RouteResult<T>> {
   let response: Response

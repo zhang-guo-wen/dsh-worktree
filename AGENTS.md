@@ -15,10 +15,11 @@
 - `src/` host 半边：`service.ts`（worktree 增删查 + 布局推导）、`route.ts`（`/worktree/api/*`）、`session.ts`、
   `archive-cleanup.ts`（归档后清理）、`file-guard.ts` + `backup-tool.ts`（改动前保护）、`policy.ts` / `branch-rule.ts` / `validate.ts`（两侧共享）。
 - `src/client/` 浏览器半边：`WorktreeChip.*`（hero 行胶囊）、`seat-store.ts`、`draft-transfer.ts`、
-  `checkout-notice-*`（归档结果 toast）、`SettingsSection.*`（设置 → Worktree）、`settings-*.ts`。
+  `checkout-notice-*`（归档结果 toast）、`BackupPanel.*`（右侧边栏「文件备份」页：平铺列表 + 逐个还原）、
+  `SettingsSection.*`（设置 → 文件备份：Worktree 设置与自动备份两张卡）、`settings-*.ts`。
 - `lib/` 构建产物（`index.mjs` host + `client.js` 浏览器 handoff）**已提交进仓库**，别人可以直接从 git 安装；
   改完源码**记得 `npm run build` 并把 `lib/` 一起提交**。
-- `tests/` 15 个 spec、`cordis.patch.yml` 组合插件行、`README*.md` / `docs/` 文档。
+- `tests/` 21 个 spec、`cordis.patch.yml` 组合插件行、`README*.md` / `docs/` 文档。
 - 逐组件职责与接线细节见 [.claude/rules/architecture.md](.claude/rules/architecture.md)。
 
 ## 构建与测试
@@ -29,7 +30,7 @@ npm run build     # tsdown（host → lib/index.mjs）+ node build-client.mjs（
 
 # 从 Harness checkout 根运行
 node_modules/.bin/vitest run --root dsh-worktree
-node_modules/.bin/vitest run --root dsh-worktree --config vitest.harness.config.ts   # 浏览器半边四个 spec
+node_modules/.bin/vitest run --root dsh-worktree --config vitest.harness.config.ts   # 浏览器半边 spec
 
 npm run typecheck
 ```
@@ -45,13 +46,17 @@ npm run typecheck
 - **改动前保护**（fileGuard，默认开）：同一会话第一次的副本是权威的、第二次改动不覆盖；只保护已存在的文件；
   没有大小上限；每个会话一份、会话归档即删除。**结果必须回带副本的绝对路径**（`worktree_backup` 的文本与结构化输出、
   自动路径的日志）——否则拿到"已保护"的一方无从恢复。**不碰 `fs/*`**，删除类命令一律 `deny` 并点名 `worktree_backup`。
-- **归档清理三条不变量**：不拦截归档（失败降级为日志）、不丢工作（脏目录保留）、并发串行。
+- **归档清理两条触发腿（无轮询）**：`domain/changed`（storage-domain 在**落盘后**广播 workspace 域的全局写入，`name: 'workspace'` + 全局 put；payload 不读，只当触发器，权威数据取 `workspaceRegistry.archivedSessionIds`）覆盖**所有**归档；`workspace/session-stop`（**只有「停止并归档」会发**）在该回合真正停下后再扫一遍。**不追溯、无启动补扫**：启动时的集合直接记为 `handled`，只清理运行期间新到的归档（取消归档会复位）。三条不变量：不拦截归档（失败降级为日志）、不丢工作（脏目录保留）、并发串行。
 - **记忆不隔离是刻意的**：worktree 是独立工作区、文件与授权各自独立，但 `{project}` 回溯到主仓库，记忆与上下文共享。
 - `ctx.get('x')` 取服务，**不要** `ctx.x`；CSS module 里 JSX 引用的类必须都有定义，否则静默无样式。
 - **跨文件契约必须一起改**：`policy.ts` 的取值集合 ↔ 设置页/浏览器半边；`policy.ts` 的 `DEFAULT_FILE_GUARD` /
-  `DEFAULT_DENY_DESTRUCTIVE_COMMANDS` ↔ `settings-fields.ts` 的 `SWITCH_DEFAULT`；`defineTool` 必须留在 `backup-tool.ts`。
+  `DEFAULT_DENY_DESTRUCTIVE_COMMANDS` / `DEFAULT_NEW_SESSION_WORKTREE` / `DEFAULT_BACKUP_SIDEBAR` ↔ `settings-fields.ts` 的
+  `SWITCH_DEFAULTS`（**逐字段**，不是一个共享布尔——四个开关的默认不同）；`defineTool` 必须留在 `backup-tool.ts`。
+- **`newSessionWorktree` 与 `backupSidebar` 是仅有的两个由浏览器半边消费的策略**：Host 只存取与下发。前者由
+  `seat-store.ts` 的 `autoStart` 决定花不花这次 seat（每会话一次，失败不再重试）；后者决定 `src/client/index.ts` 是否向
+  右侧边栏注册 `worktree-backup` 标签类型（含「开始」页入口），改它要同时动设置页、注册处与这条规则。
 - **配置校验**：`agentsDirectory` 必须是工作区相对目录（无盘符、无 `..`），`nestedScanDepth` 必须是正整数——不合法直接抛错，插件加载即失败。
-- **volatile 与启动时字段分开**：设置页那五项保存即生效（不重启）；`agentsDirectory` / `gitTimeoutMs` / `startSessionRoute` /
+- **volatile 与启动时字段分开**：设置页那七项保存即生效（不重启）；`agentsDirectory` / `gitTimeoutMs` / `startSessionRoute` /
   `removeOnSessionArchive` 只在启动时生效。
 - **未明确要求不发版**：不自行递增 `version`、不打 tag。
 
@@ -74,8 +79,8 @@ npm run typecheck
 - [.claude/rules/nested-repositories.md](.claude/rules/nested-repositories.md)：子模块与独立嵌套仓库的创建/删除、扫描层级、三种存储布局。
 - [.claude/rules/archive-cleanup.md](.claude/rules/archive-cleanup.md)：归档删除的触发时机、6 步判定链、三条不变量。
 - [.claude/rules/checkout-notice.md](.claude/rules/checkout-notice.md)：归档结果记录（removed / kept / unknown）与浏览器第二条通知。
-- [.claude/rules/file-guard.md](.claude/rules/file-guard.md)：改动前保护的发现机制、删除命令拦截、四条不变量、备份存储与失败语义。
+- [.claude/rules/file-guard.md](.claude/rules/file-guard.md)：改动前保护的发现机制、删除命令拦截、四条不变量、备份存储与失败语义，以及列出与还原（`list` / `restore`、路由 `backups` / `restore`）。
 - [.claude/rules/config.md](.claude/rules/config.md)：全部配置字段与默认值、volatile 分界、设置页写入 profile 的规则。
-- [.claude/rules/client-ui.md](.claude/rules/client-ui.md)：手机断点、hero 行 CSS 对齐、草稿迁移时序、设置页列宽与触摸尺寸。
+- [.claude/rules/client-ui.md](.claude/rules/client-ui.md)：手机断点、hero 行 CSS 对齐、草稿迁移时序、设置页列宽与触摸尺寸、右侧边栏文件备份页的注册与平铺列表。
 - [.claude/rules/failure-modes.md](.claude/rules/failure-modes.md)：失败模式总表与易崩清单 11 条。
 - [.claude/rules/build-test-release.md](.claude/rules/build-test-release.md)：安装变体、构建流水线、两条测试命令与用例覆盖、发版打 tag。

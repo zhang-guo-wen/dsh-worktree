@@ -36,6 +36,13 @@ export interface ConfigFormsDouble {
   readonly mutations: RecordedMutation[]
   /** Namespaces the page asked the Host to serve. */
   readonly watched: string[][]
+  /**
+   * Publish a new resolved section and notify subscribers, the way the Host
+   * does when its document moves. A case uses this to prove that a surface
+   * reading the policy reacts to an edit made somewhere else.
+   * @param value - the new resolved section.
+   */
+  readonly setValue: (value: Record<string, unknown>) => void
 }
 
 /**
@@ -91,5 +98,9 @@ export function configFormsDouble(options: {
       return () => { off?.() }
     },
   }
-  return { service, snapshot, mutations, watched }
+  const setValue = (value: Record<string, unknown>): void => {
+    snapshot.current = { ...snapshot.current, status: 'ready', value }
+    for (const listener of listeners) listener()
+  }
+  return { service, snapshot, mutations, watched, setValue }
 }

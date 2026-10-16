@@ -15,6 +15,11 @@
  *
  * `checkout` answers the one question the browser half cannot: what the archive
  * cleanup did to a path whose Workspace row is gone (see `archive-cleanup.ts`).
+ *
+ * `backups` and `restore` are the file guard's read and undo, and they resolve
+ * the session's working directory here rather than taking it from the request:
+ * a copy lives below a directory named after the session, but what it restores
+ * to is the session's own `cwd`, and only the Host's session store knows that.
  * @module @guowenzhang/dsh-worktree/route
  */
 
@@ -23,6 +28,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { probeArchiveOutcome } from './archive-cleanup.ts'
+import { NoSuchBackupError, type FileGuard } from './file-guard.ts'
 import { GitCommandError, isGitWorkTree, runGit } from './git.ts'
 import { startSessionIn } from './session.ts'
 import { InvalidInitialSelectionError, type WorktreeService } from './service.ts'
@@ -110,6 +116,33 @@ function selectedEntries(value: unknown): string[] | undefined {
 }
 
 /**
+ * The working directory one session runs in.
+ *
+ * Read from the Host's session store, never from the request: a backup's
+ * relative path is only meaningful against the directory the session actually
+ * had, and a caller-supplied one could point a restore at another file with the
+ * same tail. A session this host does not know has no directory to restore
+ * into, and says so instead of guessing.
+ * @param ctx - the scope the route handler runs in.
+ * @param sessionId - the session named by the request.
+ * @returns the absolute working directory.
+ * @throws {RouteError} when the session is not in this host's session store.
+ */
+function sessionWorkspace(ctx: Context, sessionId: string): string {
+  const sessions = ctx.get('sessions') as SessionsLike | undefined
+  const cwd = sessions?.get(SessionId(sessionId))?.header.cwd
+  if (cwd === undefined) {
+    throw new RouteError(404, `session ${JSON.stringify(sessionId)} is not known to this host, so its working directory is unknown`)
+  }
+  return cwd
+}
+
+/** The narrow view of the session store this route reads. */
+interface SessionsLike {
+  get(id: SessionId): { readonly header: { readonly cwd?: string } } | undefined
+}
+
+/**
  * Register the `/worktree/api` route.
  *
  * Registration waits for the services the route's handler reads — `webServer`,
@@ -123,10 +156,15 @@ function selectedEntries(value: unknown): string[] | undefined {
  * disappears on unload. A deployment missing one of the three keeps the
  * model-facing tools and mounts no route, rather than one whose start fails at
  * the first missing service.
+ *
+ * The session store is read with `ctx.get` instead: it is only needed by the
+ * two backup methods, so a deployment without it keeps every other method
+ * working, and a request that needs it says so.
  * @param ctx - the Host plugin context.
  * @param service - the worktree capability.
+ * @param guard - the file guard whose copies the backup methods read and restore.
  */
-export function registerRoute(ctx: Context, service: WorktreeService): void {
+export function registerRoute(ctx: Context, service: WorktreeService, guard: FileGuard): void {
   ctx.inject(['webServer', 'workspaceRegistry', 'agents'], (scope: Context) => {
     scope.effect(() => scope.webServer.register({
       kind: 'prefix',
@@ -182,9 +220,25 @@ export function registerRoute(ctx: Context, service: WorktreeService): void {
             writeJson(res, 200, probeArchiveOutcome(requireString(body.path, 'path')))
             return
           }
+          if (method === 'backups') {
+            stage = 'backups'
+            const sessionId = requireString(body.sessionId, 'sessionId')
+            writeJson(res, 200, { entries: await guard.list(sessionId, sessionWorkspace(scope, sessionId)) })
+            return
+          }
+          if (method === 'restore') {
+            stage = 'restore'
+            const sessionId = requireString(body.sessionId, 'sessionId')
+            const relative = requireString(body.relative, 'relative')
+            writeJson(res, 200, await guard.restore(sessionId, sessionWorkspace(scope, sessionId), relative))
+            return
+          }
           throw new RouteError(404, `unknown worktree API method ${JSON.stringify(method)}`)
         } catch (error: unknown) {
-          const status = error instanceof RouteError ? error.status : error instanceof InvalidInitialSelectionError ? 409 : 500
+          const status = error instanceof RouteError ? error.status
+            : error instanceof InvalidInitialSelectionError ? 409
+              : error instanceof NoSuchBackupError ? 404
+                : 500
           // The stage names which step failed. Without it a bare 500 from an
           // inner service is indistinguishable from a failure in this handler.
           const detail = error instanceof Error ? error.message : String(error)

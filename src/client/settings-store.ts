@@ -21,6 +21,7 @@ export interface WorktreeSettings {
   nestedScanDepth?: number
   fileGuard?: boolean
   denyDestructiveCommands?: boolean
+  backupSidebar?: boolean
 }
 
 /** What the worktree settings page renders. */
@@ -37,6 +38,7 @@ export interface WorktreeSettingsState extends SettingsFormShell {
   nestedScanDepth: SettingsFieldState
   fileGuard: SettingsFieldState
   denyDestructiveCommands: SettingsFieldState
+  backupSidebar: SettingsFieldState
 }
 
 /** Only edits are exposed: this page has no manual save or reset workflow. */
@@ -95,6 +97,7 @@ export class WorktreeSettingsController {
       nestedScanDepth: this.field('nestedScanDepth'),
       fileGuard: this.field('fileGuard'),
       denyDestructiveCommands: this.field('denyDestructiveCommands'),
+      backupSidebar: this.field('backupSidebar'),
     }
   }
 

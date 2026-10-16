@@ -1,11 +1,12 @@
 /**
- * Pre-change file protection.
+ * Pre-change file protection, and the list and restore built on it.
  *
- * The guard is driven through its two public entry points — the tool hook that
- * must land a copy before the write, and the model-facing declaration tool —
- * because those are the two moments a change is announced. The payload fields
- * read are the harness's own (`arguments.file_path`, `agent.session.header.cwd`,
- * `agent.session.id`), so the fixtures mirror those and nothing else.
+ * The guard is driven through its public entry points — the tool hook that must
+ * land a copy before the write, the model-facing declaration tool, and the two
+ * the file-backup page calls — because those are the moments a change is
+ * announced or undone. The payload fields read are the harness's own
+ * (`arguments.file_path`, `agent.session.header.cwd`, `agent.session.id`), so
+ * the fixtures mirror those and nothing else.
  *
  * The invariant these cases exist for: **the first copy is authoritative**. A
  * second call for the same file must never replace it, or the backup would hold
@@ -16,7 +17,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { existsSync } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { FileGuard, installFileGuard } from '../src/file-guard.ts'
 
@@ -187,6 +188,96 @@ describe('protecting a file before it changes', () => {
 
     expect(result.outcome).toBe('not-a-file')
     expect(result.backup).toBeUndefined()
+  })
+})
+
+describe('listing and restoring what a session protected', () => {
+  it('reports a changed file and a deleted one, flat, and hides an unchanged copy', async () => {
+    const { workspace, guard } = await scratch()
+    const changed = join(workspace, 'src', 'a.ts')
+    const deleted = join(workspace, 'docs', 'gone.md')
+    const untouched = join(workspace, 'kept.txt')
+    await mkdir(join(workspace, 'src'), { recursive: true })
+    await mkdir(join(workspace, 'docs'), { recursive: true })
+    await writeFile(changed, 'original a')
+    await writeFile(deleted, 'original doc')
+    await writeFile(untouched, 'same')
+    for (const file of [changed, deleted, untouched]) await guard.protect(agent(workspace), file)
+    await writeFile(changed, 'replaced a')
+    await rm(deleted)
+
+    const entries = await guard.list('session-1', workspace)
+
+    // The tree is walked as one flat list: a nested file is a row of its own,
+    // not a child of a directory row. The copy that still matches its file is
+    // left out — there is nothing there to restore.
+    expect(entries.map(entry => [entry.name, entry.state])).toEqual([
+      ['docs/gone.md', 'deleted'],
+      ['src/a.ts', 'modified'],
+    ])
+    expect(entries.every(entry => entry.backup.startsWith(guard.root))).toBe(true)
+    expect(entries[0]!.path).toBe(deleted)
+  })
+
+  it('writes a copy back over a changed file, and recreates a deleted one', async () => {
+    const { workspace, guard } = await scratch()
+    const changed = join(workspace, 'src', 'a.ts')
+    const deleted = join(workspace, 'deep', 'nested', 'gone.md')
+    await mkdir(join(workspace, 'src'), { recursive: true })
+    await mkdir(join(workspace, 'deep', 'nested'), { recursive: true })
+    await writeFile(changed, 'original a')
+    await writeFile(deleted, 'original doc')
+    await guard.protect(agent(workspace), changed)
+    await guard.protect(agent(workspace), deleted)
+    await writeFile(changed, 'ruined a')
+    await rm(deleted)
+
+    const restored = await guard.restore('session-1', workspace, 'deep/nested/gone.md')
+    await guard.restore('session-1', workspace, 'src/a.ts')
+
+    // A deleted file's directories come back with it, and the copy survives the
+    // restore: the same row can be restored again after a later change.
+    expect(restored.path).toBe(deleted)
+    expect(await readFile(changed, 'utf8')).toBe('original a')
+    expect(await readFile(deleted, 'utf8')).toBe('original doc')
+    expect(await guard.list('session-1', workspace)).toEqual([])
+  })
+
+  it('refuses a copy path that is not inside the session, and one it never took', async () => {
+    const { workspace, guard } = await scratch()
+    const file = join(workspace, 'a.txt')
+    await writeFile(file, 'a')
+    await guard.protect(agent(workspace), file)
+
+    await expect(guard.restore('session-1', workspace, '../../escape.txt')).rejects.toThrow(/holds no backup/u)
+    await expect(guard.restore('session-1', workspace, 'missing.txt')).rejects.toThrow(/holds no backup/u)
+    await expect(guard.restore('session-1', workspace, join(workspace, 'a.txt'))).rejects.toThrow(/holds no backup/u)
+  })
+
+  it('lists an outside file by an absolute name, and refuses one whose path it cannot reconstruct', async () => {
+    const { workspace, root, guard } = await scratch()
+    const outside = join(root, '..', 'elsewhere', 'shared.txt')
+    await mkdir(dirname(outside), { recursive: true })
+    await writeFile(outside, 'elsewhere')
+    await guard.protect(agent(workspace), outside)
+    await writeFile(outside, 'changed elsewhere')
+
+    const entries = await guard.list('session-1', workspace)
+
+    expect(entries).toHaveLength(1)
+    const entry = entries[0]!
+    expect(entry.path).toBe(outside)
+    // The internal `external/…` spelling is not a name anyone recognises, so the
+    // row shows the path the copy restores to.
+    expect(entry.name).toBe(outside)
+    expect(entry.relative.startsWith('external/')).toBe(true)
+    await guard.restore('session-1', workspace, entry.relative)
+    expect(await readFile(outside, 'utf8')).toBe('elsewhere')
+  })
+
+  it('reports nothing for a session that protected nothing', async () => {
+    const { workspace, guard } = await scratch()
+    expect(await guard.list('session-1', workspace)).toEqual([])
   })
 })
 

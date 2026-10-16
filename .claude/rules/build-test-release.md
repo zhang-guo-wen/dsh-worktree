@@ -64,9 +64,9 @@ npm run build     # tsdown（host → lib/index.mjs）+ node build-client.mjs（
 node_modules/.bin/vitest run --root dsh-worktree
 ```
 
-用例覆盖：porcelain 两种分隔格式与 prunable/locked 元数据、分支列表解析、仓库根回溯（linked worktree / submodule 区分）、分支与路径校验、三种存储布局（工作区内 / 仓库同级 / 用户目录）与 `agentsDirectory` 校验、真实 git 上的创建/列举/删除/脏目录/主 checkout 拒绝/从 linked worktree 内再创建/按指定 base 分支新建、**linked checkout 探测（linked / 主 worktree / checkout 内部目录三种答案）**、**子模块与独立嵌套仓库的创建与删除（开关默认关、含扫描深度、跳过一个建不了分支的嵌套仓库并把它记进 `nestedSkipped`、带子模块 checkout 的拒绝语义、原 checkout 子模块状态不受影响）**、**归档清理（删 checkout 与工作区记录、未归档不动、非 linked 不动、脏目录保留、子代理归档不误删父工作区、同一条通知同时删掉该会话的文件备份）与归档结果记录（removed / kept + 原因 / unknown、同路径后一次覆盖前一次的真实原因）**、**第二条通知的判定（基線不报、已归档的行消失才探测、removed/kept 各出一条、unknown 静默、未归档不探测、dispose 后丢弃迟到答案）**、**服务策略热替换**、**设置页的注册门控/字段投影/保存与清理**、**文件保护（首次复制且第二次不覆盖、相对路径解析、二进制逐字节相同、工作区外仍可保护、不存在的文件不保护、AI 新建的文件在本会话不保护而在新会话保护、目录不复制、删除命令被拒且点名工具、引号内不误伤、策略关闭时不拦、复制先于委派调用落盘、无文件参数不触发、按会话删除备份且不影响别的会话、重复删除返回 false、重新创建的同 id 会话会再复制一次、dispose 后不再监听）**、**设置页字段取值转换（缺省即 schema 默认而非 false、开关写布尔值、非法文本被拒、其它字段仍严格）**、路由的原子性与回滚、`branches` 方法、浏览器侧分支规则与路由客户端、座位的基础分支与分支列表、控件"先拉会话目录、再导航"的次序（含导航被拒后的报错）、**草稿迁移（多行文字 + 引用芯片 + 附件一起搬、创建期间继续输入取最新一版、导航被拒时两侧都回滚且原草稿保留后重试只建一次、目标已有草稿就拒绝、Host 拒绝创建时不动草稿、创建期间切走会话就不再搬别人的草稿）**。
+上面这条命令跑的是 `vitest.config.ts` 的自足子集（当前排除了浏览器半边那几个 spec），Host 半边的服务、路由、策略、嵌套仓库、归档清理与文件保护 spec 都在其中，各自断言自己那块行为；**用例清单不在此复述**——它就在 `tests/*.spec.ts` 里，抄一份到这里只会随代码漂移。
 
-浏览器半边那四个 spec（`seat` / `registration` / `navigation` / `settings`）要 checkout 的 pnpm store 才能解析运行时依赖，走 `--config vitest.harness.config.ts` 的全量配置：
+浏览器半边那几个 spec（`seat` / `registration` / `navigation` / `settings` / `settings-autosave` / `settings-toast` / `backup-panel`）要 checkout 的 pnpm store 才能解析运行时依赖，走 `--config vitest.harness.config.ts` 的全量配置：
 
 ```sh
 node_modules/.bin/vitest run --root dsh-worktree --config vitest.harness.config.ts

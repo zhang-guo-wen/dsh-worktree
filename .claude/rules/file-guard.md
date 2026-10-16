@@ -4,9 +4,10 @@ paths:
   - "src/backup-tool.ts"
   - "tests/file-guard.spec.ts"
   - "tests/backup-tool.spec.ts"
+  - "tests/backup-panel.spec.tsx"
 ---
 
-> 覆盖什么、何时读：改动前保护的发现机制（为什么不是全树扫描）、删除命令拦截、四条不变量、备份存储布局与失败语义。改 `file-guard.ts` / `backup-tool.ts` 或 `denyDestructiveCommands` 时读。
+> 覆盖什么、何时读：改动前保护的发现机制（为什么不是全树扫描）、删除命令拦截、四条不变量、备份存储布局与失败语义、以及列出与还原（`list` / `restore`）。改 `file-guard.ts` / `backup-tool.ts` / 路由的 `backups` `restore` 或 `denyDestructiveCommands` 时读。
 >
 > 本节原属「设计约束（为什么这么做）」。
 
@@ -34,6 +35,17 @@ paths:
 
 **存储**：`~/.agents/file-guard/<会话 id sha256 前 32 位>/`，工作区内的文件照抄相对路径，恢复就是往回拷；工作区外的文件放在 `external/` 下并保留自己的路径（盘符的 `:` 去掉，`C:\a\b` → `external/C/a/b`），所以每个副本都能直接定位，**不需要任何索引或 manifest**。字节级复制，与格式无关，`.docx` 与 `.txt` 一视同仁（实测 4,105 字节的 zip 结构逐字节相同）。
 
-**副本地址必须回到调用方手里。** 目录按会话哈希命名、没有索引也没有列举工具，所以地址只能由产生它的那次调用给出：`worktree_backup` 的结果逐条带 `<申报路径> (backup: <副本绝对路径>)`，`already-protected` 也带（第一次的副本才是权威的那份）；自动路径（`write` / `edit`）把地址写进 `dsh-worktree: protected <路径> before change, kept at <副本路径>` 日志。少了地址，"已保护"就只是一句话——恢复无从下手。
+**副本地址必须回到调用方手里。** 目录按会话哈希命名、没有索引也没有列举工具，所以地址只能由产生它的那次调用给出：`worktree_backup` 的结果逐条带 `<申报路径> (backup: <副本绝对路径>)`，`already-protected` 也带（第一次的副本才是权威的那份）；自动路径（`write` / `edit`）把地址写进 `dsh-worktree: protected <路径> before change, kept at <副本路径>` 日志。少了地址，"已保护"就只是一句话——恢复无从下手。**浏览器半边现在也有了列举入口**（`list` / `restore`，见下节），但那条路同样只认副本树本身，没有新增索引。
 
 **失败与并发**：复制失败绝不阻止工具执行（`tools/pre-execute` 里由 `installFileGuard` 的调用方捕获后记 `warn`，然后照常 `next()`），因为"这一个文件的旧版本没留到"不值得拒绝整次写入。归档删除失败只降级为返回值 `false`，不抛——会话已经结束，多留一个目录是浪费空间，不是错误答案。重复归档同一会话直接返回 `false`，所以归档路径触发两次不会自相竞争。
+
+## 列出与还原（`FileGuard.list` / `FileGuard.restore`）
+
+浏览器半边的「文件备份」页读的就是这两个方法，Host 路由的 `backups` / `restore` 只是它们的出口。**没有索引，副本树就是列表**：`list` 递归走一遍 `~/.agents/file-guard/<会话哈希>/`，逐条判断目标文件与副本的关系。
+
+- **差异按内容判断，不看时间戳**：副本是在改动发生前写的，与它保住的那份状态没有任何共享的时间戳，用 mtime 比会把每一份副本都报成"已修改"。实现先比大小、再按 64 KB 分块流式比较，遇到第一处不同即停。文件不存在 → `deleted`；存在但不是普通文件 → `modified`；逐字节相同 → **不列出**（没有可还原的东西）。
+- **还原是"一份副本写回一个文件"**：`restore(session, workspace, relative)` 只接受**副本路径**（`list` 返回的 `relative`），不接受任意目标路径——目标由 Host 用会话自己的工作目录现算。`relative` 先做包含性校验（拒绝绝对路径、`..`、以及解析后跳出会话目录的路径），在会话目录里找不到普通文件就抛 `NoSuchBackupError`（路由答 404）。写回前 `mkdir -p` 目标目录，所以被删过的文件连目录一起回来。**副本本身保留**：它仍是这个会话的原始记录，同一行可以再还原一次。
+- **会话工作目录只由 Host 决定**：路由用 `ctx.get('sessions')` 查这个会话的 `header.cwd`，**不读请求体里的目录**——否则浏览器传来的目录能把还原指到另一个同名文件上。查不到该会话就答 404，不猜。
+- **工作区外的副本按平台反推绝对路径**：`external/<盘符>/…` 在 Windows 上还原成 `<盘符>:/…` 并经 `resolve` 归一成平台原生写法，POSIX 上一律还原成 `/…`。反推不出来的（Windows 上的 UNC 共享没有盘符）**在列表中直接跳过、还原时拒绝**，绝不去猜一个可能指向别处的路径。
+- **列表里只有当前会话的副本**：目录即生命周期，归档即删除，所以不会列出别的会话或已经归档的会话。
+- **路由只加两个方法**：`backups`（读列表）与 `restore`（写回一份），都要求 `sessionId`，还原还要求 `relative`；失败沿用既有 `[stage]` 前缀上报。

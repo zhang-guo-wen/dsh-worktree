@@ -51,8 +51,11 @@ async function mount(options: {
   ctx.provide('conversation', {} as never)
   ctx.provide('uiWorkspace', {} as never)
   ctx.provide('configForms', forms.service as never)
+  // The file-backup page registers its tab type with the right Sidebar, so the
+  // registry has to exist for `apply` to run; this case drives the settings page.
+  const sidebarRightTabs = { register: () => () => {}, subscribe: () => () => {} }
   ctx.inject = ((_deps: unknown, callback: (scope: unknown) => unknown) => {
-    callback({ slots, get: () => undefined, effect: (fn: () => unknown) => { fn() } })
+    callback({ slots, sidebarRightTabs, get: () => undefined, effect: (fn: () => unknown) => { fn() } })
     return undefined
   }) as typeof ctx.inject
   await ctx.plugin(plugin, {}).await()

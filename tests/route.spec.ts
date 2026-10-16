@@ -13,9 +13,10 @@ import { execFileSync } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import { FileGuard } from '../src/file-guard.ts'
 import { registerRoute } from '../src/route.ts'
 import { WorktreeService } from '../src/service.ts'
 
@@ -70,6 +71,12 @@ interface Harness {
   readonly createdSessions: { cwd: string | undefined }[]
   /** Session ids the Workspace ledger was asked to account, in order. */
   readonly attachedSessions: string[]
+  /** The session the backup methods resolve a working directory for. */
+  readonly sessionId: string
+  /** That session's working directory, which is also where the guard protects files. */
+  readonly sessionWorkspace: string
+  /** The guard whose copies `backups` and `restore` read. */
+  readonly guard: FileGuard
   failWorkspace: { value: boolean }
   failSession: { value: boolean }
   failAttach: { value: boolean }
@@ -109,6 +116,14 @@ async function mount(initialWorkspace?: { id: string; path: string }): Promise<H
   const failWorkspace = { value: false }
   const failSession = { value: false }
   const failAttach = { value: false }
+  // The backup methods resolve a session's working directory on the Host, so
+  // the harness owns both: a scratch directory to protect files in, and a
+  // session store that answers for exactly one session id.
+  const sessionId = 'session-live'
+  const sessionWorkspace = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-worktree-route-cwd-')))
+  const guardRoot = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-worktree-route-guard-')))
+  created.push(sessionWorkspace, guardRoot)
+  const guard = new FileGuard({ directory: guardRoot, denyDestructiveCommands: true })
   const ctx = new Context()
   await provideSibling(ctx, {
     workspaceRegistry: {
@@ -133,11 +148,14 @@ async function mount(initialWorkspace?: { id: string; path: string }): Promise<H
         return { agent: { id: `session-${createdSessions.length}` } }
       },
     },
+    sessions: {
+      get: (id: string) => id === sessionId ? { header: { cwd: sessionWorkspace } } : undefined,
+    },
   })
 
   // The route waits for `webServer`; providing it afterwards is what proves
   // the wait works.
-  registerRoute(ctx, new WorktreeService())
+  registerRoute(ctx, new WorktreeService(), guard)
   await provideSibling(ctx, {
     webServer: {
       register(route: { path: string; handler: (req: never, res: never) => void }) {
@@ -167,6 +185,9 @@ async function mount(initialWorkspace?: { id: string; path: string }): Promise<H
     createdWorkspaces,
     createdSessions,
     attachedSessions,
+    sessionId,
+    sessionWorkspace,
+    guard,
     failWorkspace,
     failSession,
     failAttach,
@@ -405,5 +426,68 @@ describe('/worktree/api', () => {
     const response = await call(harness, 'start', { cwd: root, branch: 'bad name' })
     expect(response.status).toBe(500)
     expect(harness.createdWorkspaces).toEqual([])
+  })
+})
+
+describe('/worktree/api backup methods', () => {
+  /**
+   * Protect one file as the guard's own tool hook would, then change it.
+   * @param harness - the mounted route.
+   * @param relative - the file's path below the session's working directory.
+   * @param before - content to keep as the copy.
+   * @param after - content to leave in the file.
+   * @returns the file's absolute path.
+   */
+  async function protect(harness: Harness, relative: string, before: string, after: string | undefined): Promise<string> {
+    const file = join(harness.sessionWorkspace, relative)
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, before)
+    await harness.guard.protect({ session: { id: harness.sessionId, header: { cwd: harness.sessionWorkspace } } }, file)
+    if (after === undefined) rmSync(file, { force: true })
+    else writeFileSync(file, after)
+    return file
+  }
+
+  it('lists what the session changed or deleted, and restores one file', async () => {
+    const harness = await mount()
+    const changed = await protect(harness, 'src/a.ts', 'original', 'ruined')
+    const deleted = await protect(harness, 'docs/gone.md', 'kept doc', undefined)
+
+    const listed = await call(harness, 'backups', { sessionId: harness.sessionId })
+    expect(listed.status).toBe(200)
+    expect(listed.body.entries).toEqual([
+      { relative: 'docs/gone.md', path: deleted, name: 'docs/gone.md', backup: expect.any(String), state: 'deleted' },
+      { relative: 'src/a.ts', path: changed, name: 'src/a.ts', backup: expect.any(String), state: 'modified' },
+    ])
+
+    const restored = await call(harness, 'restore', { sessionId: harness.sessionId, relative: 'src/a.ts' })
+    expect(restored.status).toBe(200)
+    expect(restored.body).toMatchObject({ path: changed })
+    expect(readFileSync(changed, 'utf8')).toBe('original')
+    // The restore rewrote the file, so the list no longer reports it — the
+    // deleted file, which was not restored, still is.
+    const after = await call(harness, 'backups', { sessionId: harness.sessionId })
+    expect((after.body.entries as { relative: string }[]).map(entry => entry.relative)).toEqual(['docs/gone.md'])
+  })
+
+  it('answers 404 for a session this host does not know and for a copy it never took', async () => {
+    const harness = await mount()
+    const unknown = await call(harness, 'backups', { sessionId: 'session-elsewhere' })
+    expect(unknown.status).toBe(404)
+    expect(String((unknown.body.error as { message: string }).message)).toMatch(/session-elsewhere/u)
+
+    const missing = await call(harness, 'restore', { sessionId: harness.sessionId, relative: 'nope.txt' })
+    expect(missing.status).toBe(404)
+    expect((await call(harness, 'restore', { sessionId: harness.sessionId })).status).toBe(400)
+  })
+
+  it('refuses a restore whose copy path leaves the session directory', async () => {
+    const harness = await mount()
+    await protect(harness, 'src/a.ts', 'original', 'ruined')
+
+    const escape = await call(harness, 'restore', { sessionId: harness.sessionId, relative: '../../outside.txt' })
+
+    expect(escape.status).toBe(404)
+    expect(existsSync(join(harness.sessionWorkspace, '..', '..', 'outside.txt'))).toBe(false)
   })
 })

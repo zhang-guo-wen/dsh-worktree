@@ -173,6 +173,9 @@ async function mount(options: {
       inject: (_name: string, callback: () => unknown) => { callback(); return () => {} },
       register: (entry: { inject: () => WorktreeChipInjected }) => { face = entry.inject(); return () => {} },
     },
+    // The file-backup page registers a tab type with the right Sidebar; this
+    // case drives the chip, so the registry only has to exist.
+    sidebarRightTabs: { register: () => () => {}, subscribe: () => () => {} },
   }
 
   const ctx = new Context()

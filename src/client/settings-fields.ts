@@ -12,14 +12,14 @@
  */
 
 import {
-  DEFAULT_DENY_DESTRUCTIVE_COMMANDS, DEFAULT_FILE_GUARD, DEFAULT_NEW_SESSION_WORKTREE,
+  DEFAULT_BACKUP_SIDEBAR, DEFAULT_DENY_DESTRUCTIVE_COMMANDS, DEFAULT_FILE_GUARD, DEFAULT_NEW_SESSION_WORKTREE,
   NESTED_REPOSITORY_POLICIES, WORKTREE_LAYOUTS,
 } from '../policy.ts'
 
 /**
  * Every switch field, with the schema default an absent value resolves to.
  *
- * Two of the three default to `true` and one to `false`, so a single
+ * Three of the four default to `true` and one to `false`, so a single
  * `SWITCH_DEFAULT` would have to lie about somebody. These entries must move
  * with the `DEFAULT_*` constants in `policy.ts`: a page that renders "on" for a
  * switch that is off has the user "fix" a setting that was already correct,
@@ -29,11 +29,13 @@ export const SWITCH_DEFAULTS: Readonly<Record<string, boolean>> = {
   fileGuard: DEFAULT_FILE_GUARD,
   denyDestructiveCommands: DEFAULT_DENY_DESTRUCTIVE_COMMANDS,
   newSessionWorktree: DEFAULT_NEW_SESSION_WORKTREE,
+  backupSidebar: DEFAULT_BACKUP_SIDEBAR,
 }
 
 /** Every policy field the settings page edits, in the order the page renders them. */
 export const WORKTREE_SETTINGS_FIELDS = [
   'newSessionWorktree', 'nestedRepositories', 'defaultPath', 'nestedScanDepth', 'fileGuard', 'denyDestructiveCommands',
+  'backupSidebar',
 ] as const
 
 /** One policy field the settings page edits. */

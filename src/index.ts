@@ -28,7 +28,7 @@ import { join } from 'node:path'
 import type { Context, Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  DEFAULT_AGENTS_DIRECTORY, DEFAULT_DENY_DESTRUCTIVE_COMMANDS, DEFAULT_FILE_GUARD, DEFAULT_GIT_TIMEOUT_MS,
+  DEFAULT_AGENTS_DIRECTORY, DEFAULT_BACKUP_SIDEBAR, DEFAULT_DENY_DESTRUCTIVE_COMMANDS, DEFAULT_FILE_GUARD, DEFAULT_GIT_TIMEOUT_MS,
   DEFAULT_NESTED_REPOSITORIES, DEFAULT_NESTED_SCAN_DEPTH, DEFAULT_NEW_SESSION_WORKTREE, DEFAULT_WORKTREE_LAYOUT,
   FILE_GUARD_DIRECTORY_SEGMENTS,
   SETTINGS_NAMESPACE,
@@ -138,6 +138,15 @@ export interface Config {
    * call to the route.
    */
   newSessionWorktree: Volatile<boolean>
+  /**
+   * Whether the right sidebar offers the file-backup page.
+   *
+   * On by default ({@link DEFAULT_BACKUP_SIDEBAR}): the copies are already being
+   * taken, so the page that lists and restores them is what makes them useful.
+   * Only the browser half consumes this — it registers the sidebar tab type
+   * while the switch is on — so the Host does no more than store and serve it.
+   */
+  backupSidebar: Volatile<boolean>
 }
 
 /**
@@ -161,6 +170,7 @@ export const Config = z.object({
   fileGuard: z.boolean().default(DEFAULT_FILE_GUARD).volatile(),
   denyDestructiveCommands: z.boolean().default(DEFAULT_DENY_DESTRUCTIVE_COMMANDS).volatile(),
   newSessionWorktree: z.boolean().default(DEFAULT_NEW_SESSION_WORKTREE).volatile(),
+  backupSidebar: z.boolean().default(DEFAULT_BACKUP_SIDEBAR).volatile(),
 })
 
 /**
@@ -230,5 +240,5 @@ export function apply(ctx: Context, config: Config): void {
   // whether an archived session's checkout goes, never whether its backups end
   // with it.
   installArchiveCleanup(ctx, service, guard, { removeCheckouts: config.removeOnSessionArchive ?? true })
-  if (config.startSessionRoute ?? true) registerRoute(ctx, service)
+  if (config.startSessionRoute ?? true) registerRoute(ctx, service, guard)
 }

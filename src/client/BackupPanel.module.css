@@ -1,0 +1,151 @@
+/* The file-backup page's body, drawn inside the right Sidebar's pane: the
+   pane's body is a flex column with a definite height, so this page takes that
+   height outright and the list is the one scroller under a fixed toolbar.
+
+   The list is flat by design — one row per file, the path as the row's own
+   label, the state as a tag from the shared palette, and the restore control on
+   the trailing edge. There are no folder rows and no indentation: the question
+   this page answers is which files changed, not where they live. Every colour
+   is a `--dsw-alias-*` semantic token, so the light and dark themes stay the
+   theme's business. */
+
+.page {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* One 38px bar flush under the pane's tab strip, matching the workspace file
+   tree's header (ui-sidebar-files FilesBody `.header`): the count on the left,
+   the refresh control on the right. */
+.toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  align-items: center;
+  box-sizing: border-box;
+  height: 38px;
+  padding: 0 8px 0 16px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+/* The count doubles as the busy line: while the first read is in flight it says
+   so, and a refresh over existing rows leaves the count standing and only the
+   control goes inert. */
+.count {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.list {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  /* The workspace list's 2px scrollbar offset, so the bar sits clear of the
+     pane's edge and the rows keep their inset whether or not it overflows. */
+  margin-right: 2px;
+  padding: 8px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  list-style: none;
+}
+
+.list::-webkit-scrollbar-track {
+  margin: 2px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.list > .row:last-child {
+  border-bottom: 0;
+}
+
+/* The text column keeps the control clear of a long path and lets the path wrap
+   instead of truncating: the tail of a path is what identifies the file. */
+.rowText {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.name {
+  font: var(--dsw-font-xs-13);
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* A refused read and a refused restore both carry the failure ink, so the two
+   are recognisable as the same class of news wherever they appear. */
+.failed {
+  margin: 0;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-state-error-primary);
+  overflow-wrap: anywhere;
+}
+
+.notice {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 12px 16px;
+}
+
+/* The empty state says why it is empty and what fills it, rather than leaving a
+   centred line of grey. */
+.empty {
+  margin: 0;
+  padding: 16px;
+  font: var(--dsw-font-xs-13);
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+/* The first read's placeholder rows: the final layout's height and rhythm, in
+   the theme's skeleton fill. */
+.skeleton {
+  display: block;
+  width: 60%;
+  height: 14px;
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-skeleton);
+}
+
+/* Touch devices: the row reaches the 44px minimum and the restore control with
+   it, so neither the tap nor the neighbouring row is a miss. */
+@media (pointer: coarse) {
+  .row {
+    min-height: 44px;
+  }
+
+  .action {
+    min-height: 44px;
+  }
+}

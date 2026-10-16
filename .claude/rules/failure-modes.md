@@ -4,7 +4,7 @@ paths:
   - "tests/**"
 ---
 
-> 覆盖什么、何时读：失败模式总表（每种情况插件怎么表现）与易崩清单 11 条（一改就崩的接线点）。排查「为什么没删除 / 为什么报错」、动跨文件契约（`policy.ts` / `settings-fields.ts` / `file-guard.ts` / `backup-tool.ts`）之前读。
+> 覆盖什么、何时读：失败模式总表（每种情况插件怎么表现）与易崩清单 14 条（一改就崩的接线点）。排查「为什么没删除 / 为什么报错 / 为什么备份页空着」、动跨文件契约（`policy.ts` / `settings-fields.ts` / `file-guard.ts` / `backup-tool.ts` / 备份页注册）之前读。
 
 ## 失败模式
 
@@ -25,6 +25,12 @@ paths:
 | 会话挂不进工作区 | 报 `[attach]`，checkout 与会话都保留（删掉 checkout 会打断刚在里面启动的会话） |
 | **草稿搬不过去**（源会话正在提交、目标会话已有草稿、宿主没有 `rebindDraftFiles`、引用快照与文本对不上） | 该次导航整体回滚：新会话清空、附件重新绑回源会话，**原草稿一字不丢**，原因显示在 worktree 胶囊上；已创建的 checkout 与会话照常保留，用户可照常进入后手动粘贴 |
 | **创建期间用户又切了会话** | 不导航、不动任何草稿（`shown !== sourceId`），已建好的 checkout 与会话仍在侧边栏里 |
+| 备份页读到的东西与副本一致 | 该行**不列出**（没有可还原的东西）；全部一致时显示空态并说明副本何时产生 |
+| 还原请求的副本不存在 / `relative` 越出会话目录 / 目标不是普通文件 | 路由答 **404**，页面在该行显示宿主的原因，按钮回到可用状态 |
+| 会话不在本宿主的会话存储里（例如已归档、或换了宿主） | `backups` / `restore` 答 404 并点名会话；**不读请求体里的目录**，绝不猜工作目录 |
+| 工作区外的副本是 Windows UNC 路径（没有盘符可反推） | `list` 跳过它、`restore` 拒绝它——宁可少一行，也不把文件写到一个猜出来的位置 |
+| `sessions` 服务缺失 | 其余路由方法照常（它们不用它），只有 `backups` / `restore` 报会话未知 |
+| `sidebarRightTabs` 缺失（没有右侧边栏的部署） | 不注册备份页；芯片、设置页、归档通知照常 |
 
 ## 易崩清单
 
@@ -36,6 +42,9 @@ paths:
 6. `startSessionRoute: false` 却从界面勾选 → 路由没挂，客户端只会报 "the worktree route is unreachable"。
 7. 改 `src/policy.ts` 的取值集合后忘了同步设置页/浏览器半边 → 两侧对"哪些值合法"不再一致，Host 拒绝的值可能已经在页面上被暂存。
 8. hero 行距或那个 dock 的 order 被上游改动 → 胶囊不再与 `选择工作区 / 模式` 同一行（见 `.claude/rules/client-ui.md` 的「界面实现细节」）。
-9. 改 `policy.ts` 的 `DEFAULT_FILE_GUARD` / `DEFAULT_DENY_DESTRUCTIVE_COMMANDS` 却忘了同步 `src/client/settings-fields.ts` 的 `SWITCH_DEFAULT` → 设置页把"开"画成"关"（或反之），用户会去改一个本来就对的设置。两者必须一起改。
+9. 改 `policy.ts` 的 `DEFAULT_FILE_GUARD` / `DEFAULT_DENY_DESTRUCTIVE_COMMANDS` / `DEFAULT_NEW_SESSION_WORKTREE` / `DEFAULT_BACKUP_SIDEBAR` 却忘了同步 `src/client/settings-fields.ts` 的 `SWITCH_DEFAULTS` → 设置页把"开"画成"关"（或反之），用户会去改一个本来就对的设置。两者必须一起改。
 10. 把 `defineTool` 从 `src/backup-tool.ts` 挪回 `src/file-guard.ts` → 守卫会因此在**导入期**拉进工具注册表及其服务依赖（`dsh-tools` → `dsh-scope` 等），自足 suite 立刻加载失败。拆成两个模块就是为了让守卫本身不依赖注册表。
 11. 改 `file-guard.ts` 的 `place()` 或 `archive()` 时忘了两边都用 `sessionKeyOf` → 写进一个键、删另一个键，归档后备份目录永远留着。
+12. 备份页的注入面**每次渲染返回新对象**（例如在 `inject: (sessionId) => ({ list, restore })` 里现造闭包）→ 组件里以它为依赖的 effect 每次渲染都重跑，变成"读一次、渲染、再读一次"的循环。注册时构造**一个**面对象并原样返回。
+13. 备份页 `sidebar.right.pane.tab` 的 `key` 与 `sidebarRightTabs.register` 的 `id` 不一致 → 席位按类型的 `id` 派发，两者不一致时页面永远不渲染（宿主显示"不可查看"占位），而注册本身不报错。
+14. 还原时接受调用方给的**目标路径**而不是副本路径 → 浏览器传一个别的目录就能把 `notes.txt` 写进那儿；只接受 `list` 返回的 `relative`，目标由 Host 用会话自己的工作目录现算。

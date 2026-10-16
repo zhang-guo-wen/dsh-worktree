@@ -44,11 +44,18 @@
  * limit, and the destructive shell commands are refused so the model declares
  * its targets instead of deleting blind.
  *
+ * The copies are also the restore list. {@link FileGuard.list} walks one
+ * session's directory and reports the files that differ from their copy, and
+ * {@link FileGuard.restore} writes one copy back over its file; both work from
+ * the tree alone, because a copy that exists is the only thing a restore needs.
+ * A change is detected by comparing content, since the copy is written just
+ * before the change and shares no timestamp with the state it preserved.
+ *
  * @module @guowenzhang/dsh-worktree/file-guard
  */
 
 import { createHash } from 'node:crypto'
-import { copyFile, mkdir, rm, stat } from 'node:fs/promises'
+import { copyFile, mkdir, open, readdir, rm, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 // Pulls the `tools/*` event declarations into this program's type face. The
@@ -115,6 +122,47 @@ export interface ProtectResult {
    * reported, because that first copy is the authoritative one.
    */
   readonly backup?: string
+}
+
+/** One protected file as the restore list reports it. */
+export interface BackupEntry {
+  /**
+   * The copy's path inside the session's directory, `/`-separated.
+   *
+   * This is the restore request's key: the directory it is resolved against,
+   * plus this path, is the copy to write back. Addressing the copy rather than
+   * the target is what keeps a restore from naming a file no copy exists for.
+   */
+  readonly relative: string
+  /** Absolute path a restore writes back to. */
+  readonly path: string
+  /**
+   * The path to show for this copy: workspace-relative for a file the guard
+   * protected inside the working directory, absolute for one outside it.
+   */
+  readonly name: string
+  /** Absolute path of the copy itself, the address a user can also read on disk. */
+  readonly backup: string
+  /** `modified` — the file differs from its copy; `deleted` — the file is gone. */
+  readonly state: 'modified' | 'deleted'
+}
+
+/**
+ * A restore that names no copy this session holds.
+ *
+ * Distinguished from an I/O failure because the two need different answers: a
+ * request naming nothing is the caller's mistake, while a copy that exists and
+ * cannot be written is a failure of the machine.
+ */
+export class NoSuchBackupError extends Error {
+  /**
+   * @param session - the session whose directory was searched.
+   * @param relative - the copy path that was not found under it.
+   */
+  constructor(session: string, relative: string) {
+    super(`session ${JSON.stringify(session)} holds no backup at ${JSON.stringify(relative)}`)
+    this.name = 'NoSuchBackupError'
+  }
 }
 
 /**
@@ -239,6 +287,70 @@ export class FileGuard {
     const results: ProtectResult[] = []
     for (const path of paths) results.push(await this.protect(agent, path))
     return results
+  }
+
+  /**
+   * List one session's backups whose file is not what the copy holds.
+   *
+   * The copy tree is the whole record, so this walks it rather than consulting
+   * an index: one directory per session, the file's own path below it. A copy
+   * whose file is byte-identical is left out — the copy was not needed, and
+   * reporting it as changed would invite a restore that changes nothing. A copy
+   * outside the working directory whose original path cannot be reconstructed
+   * (a UNC share) is left out rather than pointed at a guessed location.
+   * @param session - the session whose backups to list.
+   * @param workspace - the absolute working directory the relative copies restore into.
+   * @returns the changed and deleted files, by name.
+   */
+  async list(session: string, workspace: string): Promise<readonly BackupEntry[]> {
+    const directory = join(this.directory, sessionKeyOf(session))
+    const entries: BackupEntry[] = []
+    for (const relative of (await copiesUnder(directory)).sort()) {
+      const target = targetOf(workspace, relative)
+      if (target === undefined) continue
+      const state = await difference(join(directory, relative), target)
+      if (state === undefined) continue
+      entries.push({
+        relative,
+        path: target,
+        name: nameOf(relative, target),
+        backup: join(directory, relative),
+        state,
+      })
+    }
+    return entries
+  }
+
+  /**
+   * Copy one backup back over the file it came from.
+   *
+   * The copy is the state from before this session's first change, so writing it
+   * back is what undoes that change — including for a file that was deleted, in
+   * which case the directory holding it is created again. The backup itself is
+   * kept: it stays the session's record of the original, and a later restore of
+   * the same file uses it again.
+   * @param session - the session holding the backup.
+   * @param workspace - the absolute working directory the relative copies restore into.
+   * @param relative - the copy's path below the session directory, as listed.
+   * @returns the absolute path written, and the bytes copied.
+   * @throws {NoSuchBackupError} when no copy exists at that path.
+   */
+  async restore(session: string, workspace: string, relative: string): Promise<{ readonly path: string; readonly bytes: number }> {
+    const directory = join(this.directory, sessionKeyOf(session))
+    const source = contained(directory, relative)
+    const target = source === undefined ? undefined : targetOf(workspace, relative)
+    if (source === undefined || target === undefined) throw new NoSuchBackupError(session, relative)
+    let info
+    try {
+      info = await stat(source)
+    } catch (error: unknown) {
+      if (isMissing(error)) throw new NoSuchBackupError(session, relative)
+      throw error
+    }
+    if (!info.isFile()) throw new NoSuchBackupError(session, relative)
+    await mkdir(dirname(target), { recursive: true })
+    await copyFile(source, target)
+    return { path: target, bytes: info.size }
   }
 
   /**
@@ -469,6 +581,155 @@ function externalPathOf(target: string): string {
   const slashed = resolve(target).replace(/\\/g, '/')
   const withoutLeadingSlashes = slashed.replace(/^\/+/, '')
   return withoutLeadingSlashes.replace(/:/g, '')
+}
+
+/**
+ * Every copy below a session directory, as `/`-separated paths relative to it.
+ *
+ * The tree is walked rather than indexed: one copy per file means the tree is
+ * the record, and a directory that was never created is simply an empty list.
+ * @param directory - the session's directory.
+ * @param prefix - the path of `directory` below the walk's root, empty at the top.
+ * @returns the copy paths, in directory order.
+ */
+async function copiesUnder(directory: string, prefix = ''): Promise<string[]> {
+  const found: string[] = []
+  let entries
+  try {
+    entries = await readdir(directory, { withFileTypes: true })
+  } catch (error: unknown) {
+    if (isMissing(error)) return found
+    throw error
+  }
+  for (const entry of entries) {
+    const path = prefix === '' ? entry.name : `${prefix}/${entry.name}`
+    if (entry.isDirectory()) found.push(...await copiesUnder(join(directory, entry.name), path))
+    else if (entry.isFile()) found.push(path)
+  }
+  return found
+}
+
+/**
+ * The absolute file one copy restores to.
+ *
+ * A workspace-relative copy names a file below the session's working directory.
+ * A copy under `external/` names one outside it, and its absolute path is
+ * reconstructed from the same rule {@link externalPathOf} wrote — which is why a
+ * path that rule cannot express exactly is refused instead of guessed: a Windows
+ * share has no drive letter to restore, and a POSIX path can start with a letter
+ * that would read as one.
+ * @param workspace - the absolute working directory.
+ * @param relative - the copy path below the session directory.
+ * @returns the absolute target, or undefined when no target can be reconstructed.
+ */
+function targetOf(workspace: string, relative: string): string | undefined {
+  if (relative === EXTERNAL_SEGMENT || relative.startsWith(`${EXTERNAL_SEGMENT}/`)) {
+    return externalTargetOf(relative.slice(EXTERNAL_SEGMENT.length + 1))
+  }
+  return resolve(workspace, relative)
+}
+
+/**
+ * Reverse one path below `external/` back into an absolute path.
+ *
+ * Resolved rather than returned as spelled, so a reconstructed Windows path is
+ * platform-native (`C:/x` becomes `C:\x`) and reads the same as the path the
+ * copy was taken from.
+ * @param relative - the `/`-separated path below `external/`.
+ * @returns the absolute path, or undefined when this platform has no exact inverse.
+ */
+function externalTargetOf(relative: string): string | undefined {
+  if (process.platform !== 'win32') return resolve(`/${relative}`)
+  const [drive, ...rest] = relative.split('/')
+  if (drive === undefined || !/^[A-Za-z]$/u.test(drive)) return undefined
+  return resolve(`${drive.toUpperCase()}:/${rest.join('/')}`)
+}
+
+/**
+ * The path the restore list shows for one copy.
+ *
+ * A copy outside the working directory has no workspace-relative form, so the
+ * absolute path it restores to is its name; showing the internal `external/…`
+ * spelling instead would name a directory the user never created.
+ * @param relative - the copy path below the session directory.
+ * @param target - the absolute path the copy restores to.
+ * @returns the display path.
+ */
+function nameOf(relative: string, target: string): string {
+  return relative.startsWith(`${EXTERNAL_SEGMENT}/`) ? target : relative
+}
+
+/**
+ * Resolve one copy path below its directory, refusing anything that leaves it.
+ *
+ * The path arrives from the browser, so it is the one input that could name a
+ * file outside the session's own tree; a resolution that escapes, or that is
+ * not a relative path at all, has no copy behind it.
+ * @param directory - the session's directory.
+ * @param relative - the copy path as requested.
+ * @returns the absolute copy path, or undefined when it is not inside `directory`.
+ */
+function contained(directory: string, relative: string): string | undefined {
+  if (relative.length === 0 || isAbsolute(relative)) return undefined
+  const target = resolve(directory, relative)
+  return relative_(directory, target) === undefined ? undefined : target
+}
+
+/** `path.relative` as a containment test: undefined when the child is not below the parent. */
+function relative_(parent: string, child: string): string | undefined {
+  const back = relative(parent, child)
+  return back.length === 0 || back.startsWith('..') || isAbsolute(back) ? undefined : back
+}
+
+/**
+ * How one copy differs from the file it holds.
+ *
+ * Compared by content, not by a timestamp: the copy is written when the change
+ * is about to happen, so a metadata comparison would report every copy as
+ * changed. A path that is gone is `deleted`; one that is no longer a regular
+ * file cannot equal the copy either.
+ * @param copy - absolute path of the copy.
+ * @param target - absolute path of the file.
+ * @returns the difference, or undefined when the two hold the same bytes.
+ */
+async function difference(copy: string, target: string): Promise<'modified' | 'deleted' | undefined> {
+  let info
+  try {
+    info = await stat(target)
+  } catch (error: unknown) {
+    if (isMissing(error)) return 'deleted'
+    throw error
+  }
+  if (!info.isFile()) return 'modified'
+  return await sameBytes(copy, target) ? undefined : 'modified'
+}
+
+/** Bytes compared per read; large enough to keep syscalls rare, small enough to stay cheap. */
+const COMPARE_CHUNK = 64 * 1024
+
+/**
+ * Whether two files hold the same bytes, stopping at the first difference.
+ * @param left - absolute path of the first file.
+ * @param right - absolute path of the second file.
+ * @returns true when every byte matches.
+ */
+async function sameBytes(left: string, right: string): Promise<boolean> {
+  const [first, second] = await Promise.all([open(left, 'r'), open(right, 'r')])
+  try {
+    const leftChunk = Buffer.allocUnsafe(COMPARE_CHUNK)
+    const rightChunk = Buffer.allocUnsafe(COMPARE_CHUNK)
+    for (;;) {
+      const [a, b] = await Promise.all([
+        first.read(leftChunk, 0, COMPARE_CHUNK, null),
+        second.read(rightChunk, 0, COMPARE_CHUNK, null),
+      ])
+      if (a.bytesRead !== b.bytesRead) return false
+      if (a.bytesRead === 0) return true
+      if (!leftChunk.subarray(0, a.bytesRead).equals(rightChunk.subarray(0, b.bytesRead))) return false
+    }
+  } finally {
+    await Promise.all([first.close(), second.close()])
+  }
 }
 
 /**

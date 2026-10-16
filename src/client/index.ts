@@ -2,12 +2,17 @@
  * Worktree surface, browser half.
  *
  * Registers the `worktree` dictionaries, one chip on the new-session screen,
- * and the settings page that owns this plugin's policy. The chip stages "start
- * this session inside a new worktree"; the Host route it calls creates the
- * checkout, registers its project, and starts the session there as one
- * operation. The settings page edits the live policy that creation runs under,
- * so what a deployment decides in its profile the user can change per machine
- * without restarting the Host.
+ * the file-backup page in the right sidebar, and the settings page that owns
+ * this plugin's policy. The chip stages "start this session inside a new
+ * worktree"; the Host route it calls creates the checkout, registers its
+ * project, and starts the session there as one operation. The settings page
+ * edits the live policy that creation runs under, so what a deployment decides
+ * in its profile the user can change per machine without restarting the Host.
+ *
+ * The backup page is a right-Sidebar tab type whose body lists the copies the
+ * Host's file guard took before this session changed a file, each with a
+ * restore control; the same settings page's `backupSidebar` switch decides
+ * whether that type is registered at all.
  *
  * The chip is registered while a BLANK main Session is current, because a
  * Session's working directory is fixed at creation: the choice exists only
@@ -22,6 +27,7 @@ import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 // The settings form's scope type, shared with the page controller below.
 import type { SettingsFormScope } from '@deepseek-ai/dsh-client-ui-primitives'
+import { PluginArtworkLoop } from '@deepseek-ai/dsh-client-ui-primitives'
 // Type-only: pulls the locale service merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 // Type-only: the slot registry Context merge (ctx.slots) and slot types.
@@ -30,6 +36,10 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: the settings domain's Context merge (ctx.configForms) and the
 // Settings section slot types.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+// Type-only: the right Sidebar's Context merge (ctx.sidebarRightTabs) and the
+// tab-type contract the backup page registers through.
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
+import type { SidebarRightTabDefinition } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 // Type-only: the Workspace UI service merge (ctx.uiWorkspace).
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 // Type-only: the Client sessions service face (ctx.sessions).
@@ -46,7 +56,9 @@ import { WorktreeChip } from './WorktreeChip.tsx'
 import type { WorktreeChipInjected } from './WorktreeChip.tsx'
 import { CheckoutNoticeToast, observeCheckouts } from './checkout-notice.tsx'
 import type { CheckoutNotice, CheckoutNoticeInjected } from './checkout-notice.tsx'
-import { request, type CheckoutProbeResult } from './api.ts'
+import { BackupPanel } from './BackupPanel.tsx'
+import type { BackupPanelInjected } from './BackupPanel.tsx'
+import { request, type BackupListResult, type CheckoutProbeResult, type RestoreResult } from './api.ts'
 import { WorktreeSeatController } from './seat-store.ts'
 import { openWithDraft } from './draft-transfer.ts'
 import { WorktreeSettingsSection } from './SettingsSection.tsx'
@@ -56,6 +68,8 @@ import { en, NS, zh, type WorktreeCopyKey } from './locales.ts'
 
 export type { WorktreeChipProps, WorktreeChipInjected } from './WorktreeChip.tsx'
 export type { WorktreeSettingsSectionProps } from './SettingsSection.tsx'
+export type { BackupPanelProps, BackupPanelInjected } from './BackupPanel.tsx'
+export type { BackupEntry, BackupListResult, RestoreResult } from './api.ts'
 export type { WorktreeSettings, WorktreeSettingsFace, WorktreeSettingsState } from './settings-store.ts'
 export type { WorktreeSeatState } from './seat-store.ts'
 export type { CheckoutNotice, CheckoutNoticeProps, CheckoutProbe, CheckoutNoticeInjected } from './checkout-notice.tsx'
@@ -68,6 +82,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     worktree: WorktreeCopyKey
   }
 }
+
+/** This implementation's identity in the right Sidebar's tab system. */
+const BACKUP_TAB_ID = '@guowenzhang/dsh-worktree/backup'
+
+/** The tab kind the file-backup page is opened as. */
+const BACKUP_TAB_KIND = 'worktree-backup'
 
 /** Required services (cordis fiber inject). */
 export const inject = ['slots', 'locale', 'conversation', 'uiWorkspace', 'configForms']
@@ -97,6 +117,61 @@ export function apply(ctx: Context): void {
     locale: NS,
     inject: () => settings.inject(),
   }, WorktreeSettingsSection))), 'ui-worktree: settings page')
+
+  // The file-backup page, as a right-Sidebar tab type and the body under it.
+  //
+  // The settings switch decides whether the TYPE exists at all: off, nothing
+  // registers, so the page has no entry on the sidebar's guide page and no tab
+  // can be opened for it — the sidebar keeps only the pages the user chose. The
+  // body stays registered either way, because a session log can still carry a
+  // tab whose type is gone, and the sidebar's own "nothing here can view this"
+  // notice is a better answer there than a body mounting without its type.
+  const backupFace: BackupPanelInjected = {
+    list: sessionId => request<BackupListResult>('backups', { sessionId }),
+    restore: (sessionId, relative) => request<RestoreResult>('restore', { sessionId, relative }),
+  }
+  ctx.inject(['slots', 'sidebarRightTabs'], (scope: Context) => {
+    const tabs = scope.sidebarRightTabs
+    const definition: SidebarRightTabDefinition = {
+      id: BACKUP_TAB_ID,
+      kind: BACKUP_TAB_KIND,
+      title: () => t('sidebar.title'),
+      guide: [{
+        id: 'backup',
+        // After the shipped pages (terminal 20), so the vendor pages keep the
+        // guide's own order and this one lands with the rest of the plugins.
+        order: 40,
+        title: () => t('sidebar.title'),
+        description: () => t('sidebar.description'),
+        icon: PluginArtworkLoop,
+      }],
+    }
+    // Read live, not captured: the settings page edits this while the sidebar
+    // runs. An absent value is the schema's default, which is on.
+    const offered = (): boolean => settingsScope.getSnapshot().value?.backupSidebar !== false
+    scope.effect(() => {
+      let registration: (() => void) | undefined
+      const sync = (): void => {
+        if (offered() === (registration !== undefined)) return
+        if (offered()) registration = tabs.register(definition)
+        else {
+          registration?.()
+          registration = undefined
+        }
+      }
+      const unsubscribe = settingsScope.subscribe(sync)
+      sync()
+      return () => {
+        unsubscribe()
+        registration?.()
+        registration = undefined
+      }
+    }, 'ui-worktree: file backup sidebar type')
+    scope.effect(() => scope.slots.inject('sidebar.right.pane.tab', () => scope.slots.register(
+      { name: 'sidebar.right.pane.tab', key: BACKUP_TAB_ID, locale: NS, inject: () => backupFace },
+      BackupPanel,
+    )), 'ui-worktree: file backup page body')
+  })
 
   // The archive flow's second notice. It reads the Workspace list the sidebar
   // already renders, so it belongs to no Session and rides the frame-wide

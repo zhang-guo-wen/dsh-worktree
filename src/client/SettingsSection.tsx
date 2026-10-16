@@ -7,9 +7,12 @@
  * right), so this page reads like every other page beside it. The Worktree card
  * answers what a checkout looks like — whether the child repositories come
  * along, how deep the search for them goes, and where the directory lands. The
- * backup card answers what happens to the files inside it. Everything else the
- * entry accepts — the agent subdirectory, the git bound, the route options — is
- * deployment composition, edited in the profile's own patch.
+ * backup card answers what happens to the files inside it: whether they are
+ * copied aside before a change, whether a destructive command is refused, and
+ * whether the right sidebar offers the page that lists and restores them.
+ * Everything else the entry accepts — the agent subdirectory, the git bound,
+ * the route options — is deployment composition, edited in the profile's own
+ * patch.
  *
  * Every valid edit saves automatically through the shared settings scope.
  * There is no manual-save footer, and leaving the page never discards a write.
@@ -318,6 +321,23 @@ export function WorktreeSettingsSection(props: WorktreeSettingsSectionProps) {
               label={t('settings.deny.label')}
               disabled={readOnly || !guardsFiles}
               onChange={(next) => { props.edit('denyDestructiveCommands', String(next)) }}
+            />
+          )}
+        />
+        <Row
+          id="worktree-backup-sidebar"
+          title={t('settings.backupSidebar.label')}
+          description={guardsFiles ? t('settings.backupSidebar.hint') : t('settings.backupSidebar.inactive')}
+          control={(
+            <Switch
+              // The schema default is on, and the store renders an absent value
+              // as that default, so this reads the same whether the Host sent a
+              // value or nothing at all.
+              checked={state.backupSidebar.text === 'true'}
+              label={t('settings.backupSidebar.label')}
+              disabled={readOnly || !guardsFiles}
+              className={css.switchHit}
+              onChange={(next) => { props.edit('backupSidebar', String(next)) }}
             />
           )}
         />
