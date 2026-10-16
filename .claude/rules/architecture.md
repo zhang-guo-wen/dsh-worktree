@@ -1,10 +1,11 @@
 ---
 paths:
   - "src/index.ts"
-  - "src/client/index.ts"
   - "cordis.patch.yml"
   - "lib/**"
   - "package.json"
+# src/client/index.ts 有意不列：它已由 client-ui.md 的 "src/client/**" 承接，
+# 去掉可避免一次 read 同时叠加 architecture + client-ui + failure-modes 三份规则。
 ---
 
 > 覆盖什么、何时读：本包的模块地图（谁负责什么）、`cordis.patch.yml` 与 `package.json` 的组合接线、host/client 生效语义。改代码、判断某逻辑该放哪、或确认「改完怎么生效」时读。
