@@ -14,7 +14,7 @@
 
 import { Context } from '@deepseek-ai/cordis'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -83,6 +83,24 @@ describe('protecting a file before it changes', () => {
     expect(second.outcome).toBe('already-protected')
     const directory = await sessionDirectory(root)
     expect(await readFile(join(directory, 'notes.txt'), 'utf8')).toBe('original')
+    // Both results name the copy: the first because it just took it, the second
+    // because that same copy is what a restore still has to use.
+    expect(first.backup).toBe(join(directory, 'notes.txt'))
+    expect(second.backup).toBe(first.backup)
+  })
+
+  it('reports an address that restores the file, so a caller can undo the change', async () => {
+    const { workspace, guard } = await scratch()
+    const file = join(workspace, 'report.md')
+    await writeFile(file, 'the version worth keeping')
+
+    const result = await guard.protect(agent(workspace), file)
+    await writeFile(file, 'ruined by the change the copy preceded')
+
+    if (result.backup === undefined) throw new Error('a protected file must report its copy')
+    await copyFile(result.backup, file)
+
+    expect(await readFile(file, 'utf8')).toBe('the version worth keeping')
   })
 
   it('resolves a path relative to the session working directory', async () => {
@@ -125,6 +143,9 @@ describe('protecting a file before it changes', () => {
     const directory = await sessionDirectory(root)
     const copied = await readdir(join(directory, 'external'), { recursive: true })
     expect(copied.some(entry => entry.endsWith('shared.txt'))).toBe(true)
+    // A file outside the workspace is the case the model has to declare, so its
+    // reported address is the only way back to the copy.
+    expect(await readFile(result.backup!, 'utf8')).toBe('elsewhere')
   })
 
   it('keeps nothing for a file that does not exist yet', async () => {
@@ -133,6 +154,7 @@ describe('protecting a file before it changes', () => {
     const result = await guard.protect(agent(workspace), join(workspace, 'fresh.txt'))
 
     expect(result.outcome).toBe('absent')
+    expect(result.backup).toBeUndefined()
     expect(existsSync(root)).toBe(false)
   })
 
@@ -164,6 +186,7 @@ describe('protecting a file before it changes', () => {
     const result = await guard.protect(agent(workspace), join(workspace, 'src'))
 
     expect(result.outcome).toBe('not-a-file')
+    expect(result.backup).toBeUndefined()
   })
 })
 

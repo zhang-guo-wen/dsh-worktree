@@ -35,11 +35,14 @@ test('display metadata exports both languages with an unscoped English fallback'
 
 // The shipped `lib/` is what a git install runs, so a stale build ships stale
 // behavior. These check the built host artifact for the file guard's presence —
-// and for the absence of the per-turn snapshot design it replaced, which is the
-// one thing a forgotten rebuild would silently keep serving.
+// the tool, the policy fields, the hook, and the copy address it now reports,
+// which is the newest thing a forgotten rebuild would leave out — and for the
+// absence of the per-turn snapshot design it replaced, which is the one thing a
+// forgotten rebuild would silently keep serving.
 test('the built host artifact carries the file guard and no superseded design', () => {
   const built = readFileSync(resolve(root, 'lib/index.mjs'), 'utf8')
-  for (const needle of ['worktree_backup', 'denyDestructiveCommands', 'fileGuard', 'tools/pre-execute']) {
+  for (const needle of ['worktree_backup', 'denyDestructiveCommands', 'fileGuard', 'tools/pre-execute',
+    'restore by copying each backup']) {
     assert.ok(built.includes(needle), `the artifact must contain ${needle}`)
   }
   for (const gone of ['snapshotRetention', 'turn-stopping', '_manifest.json']) {

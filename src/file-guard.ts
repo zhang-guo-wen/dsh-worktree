@@ -105,6 +105,16 @@ export interface ProtectResult {
   readonly path: string
   /** What happened. */
   readonly outcome: ProtectOutcome
+  /**
+   * Absolute path of the copy kept for this file, present exactly when one
+   * exists (`protected` and `already-protected`).
+   *
+   * This is the address a restore needs: copying it back over {@link path}
+   * returns the file to the state from before its first change in this session.
+   * An `already-protected` result reports the same address the first call
+   * reported, because that first copy is the authoritative one.
+   */
+  readonly backup?: string
 }
 
 /**
@@ -186,10 +196,13 @@ export class FileGuard {
     const placement = this.place(agent, declared)
     if (placement === undefined) return { path: declared, outcome: 'absent' }
     const { sessionKey, relativePath } = placement
+    const destination = join(this.directory, sessionKey, relativePath)
     const known = this.protectedFor(sessionKey)
     // The first copy is the state from before anything touched the file, so a
-    // later call must not replace it with the already-damaged version.
-    if (known.has(relativePath)) return { path: declared, outcome: 'already-protected' }
+    // later call must not replace it with the already-damaged version. The
+    // address is reported either way: the caller needs it to restore, and the
+    // first copy's address is the one that holds the pre-change state.
+    if (known.has(relativePath)) return { path: declared, outcome: 'already-protected', backup: destination }
     // A file this run watched appear is the AI's own creation: while that is
     // still the session doing the work, there is no earlier state to keep.
     if (this.createdFor(sessionKey).has(relativePath)) return { path: declared, outcome: 'absent' }
@@ -210,11 +223,10 @@ export class FileGuard {
     }
     if (!info.isFile()) return { path: declared, outcome: 'not-a-file' }
 
-    const destination = join(this.directory, sessionKey, relativePath)
     await mkdir(dirname(destination), { recursive: true })
     await copyFile(target, destination)
     known.add(relativePath)
-    return { path: declared, outcome: 'protected' }
+    return { path: declared, outcome: 'protected', backup: destination }
   }
 
   /**
@@ -289,7 +301,8 @@ export class FileGuard {
     if (result.outcome === 'protected') {
       // Nothing else records this: the copy tree is the record, and the log is
       // the only place a reader learns a file was taken before its first change.
-      console.log(`dsh-worktree: protected ${result.path} before change`)
+      // The address is part of that record — without it the copy is unfindable.
+      console.log(`dsh-worktree: protected ${result.path} before change, kept at ${result.backup}`)
     }
     return next()
   }

@@ -31,7 +31,7 @@ Copies live in `~/.agents/file-guard/<session hash>/` and **mirror the workspace
 Two things trigger a copy:
 
 - **Automatic**: when a tool names its target in its own arguments (`write`, `edit`), the copy lands *before* the write, at about 1 ms per file.
-- **Declared by the model**: before changing files whose targets no argument names, the AI is asked to call the `worktree_backup` tool with those paths. It has no scope limit — paths outside the working directory and on other drives are accepted.
+- **Declared by the model**: before changing files whose targets no argument names, the AI is asked to call the `worktree_backup` tool with those paths. It has no scope limit — paths outside the working directory and on other drives are accepted. **The result names the copy's absolute path**, so restoring a file never requires searching for it.
 
 **Destructive shell commands are refused once.** A `bash` / `pwsh` command that looks like it deletes files (`rm`, `del`, `rd`, `Remove-Item`, and so on) is denied, and the model is told to declare its targets through `worktree_backup` before retrying — a deletion cannot be recovered after it runs. Quoted spans do not count, so `echo "rm -rf /"` is not refused. The switch can be turned off in settings.
 
