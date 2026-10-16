@@ -46,7 +46,7 @@ npm run typecheck
 - **改动前保护**（fileGuard，默认开）：同一会话第一次的副本是权威的、第二次改动不覆盖；只保护已存在的文件；
   没有大小上限；每个会话一份、会话归档即删除。**结果必须回带副本的绝对路径**（`worktree_backup` 的文本与结构化输出、
   自动路径的日志）——否则拿到"已保护"的一方无从恢复。**不碰 `fs/*`**，删除类命令一律 `deny` 并点名 `worktree_backup`。
-- **归档清理两条触发腿（无轮询）**：`domain/changed`（storage-domain 在**落盘后**广播 workspace 域的全局写入，`name: 'workspace'` + 全局 put；payload 不读，只当触发器，权威数据取 `workspaceRegistry.archivedSessionIds`）覆盖**所有**归档；`workspace/session-stop`（**只有「停止并归档」会发**）在该回合真正停下后再扫一遍。**不追溯、无启动补扫**：启动时的集合直接记为 `handled`，只清理运行期间新到的归档（取消归档会复位）。三条不变量：不拦截归档（失败降级为日志）、不丢工作（脏目录保留）、并发串行。
+- **归档清理两条触发腿（无轮询）**：`domain/changed`（storage-domain 在**落盘后**广播 workspace 域的全局 put）覆盖所有归档；事件发出时 registry 内存尚未更新，须延迟至下一事件循环再读 `workspaceRegistry.archivedSessionIds`，不读 payload。`workspace/session-stop` 只在「停止并归档」发出，是并行取消请求，**不保证回合已停下**；FileGuard 关闭该会话的保护，防止晚到备份重建。备份删除逐会话捕获失败，后续归档事件重试，不阻断其他会话或 checkout 清理。`removeOnSessionArchive` 只控制 checkout，两条触发均须遵守。**不追溯、无启动补扫**：启动集合直接记为 `handled`，仅清理运行期新归档；取消归档清除待重试并恢复保护。三条不变量：不拦截归档（失败降级为日志）、不丢工作（脏目录保留）、并发串行。
 - **记忆不隔离是刻意的**：worktree 是独立工作区、文件与授权各自独立，但 `{project}` 回溯到主仓库，记忆与上下文共享。
 - `ctx.get('x')` 取服务，**不要** `ctx.x`；CSS module 里 JSX 引用的类必须都有定义，否则静默无样式。
 - **跨文件契约必须一起改**：`policy.ts` 的取值集合 ↔ 设置页/浏览器半边；`policy.ts` 的 `DEFAULT_FILE_GUARD` /

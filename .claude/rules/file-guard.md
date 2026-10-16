@@ -19,7 +19,7 @@ paths:
 
 | 触发 | 机制 | 覆盖 |
 |---|---|---|
-| `tools/pre-execute`（waterfall） | 从参数取 `file_path`，`await` 复制完成再 `next()`——先落盘后写入，**不赛跑** | `write` / `edit` |
+| `tools/pre-execute`（waterfall） | 仅匹配工具名 `write` / `edit`，再从参数取 `file_path`，`await` 复制完成再 `next()`；`read` / `read_image` 及未知工具不因带路径而备份 | `write` / `edit` |
 | 模型调 `worktree_backup` | 工具无路径限制，绝对路径照收 | bash / run_code / 重命名 / 第三方脚本 / **工作区外与其他盘** |
 
 **删除命令被拒。** `bash` / `pwsh` 的命令文本先剥掉引号再匹配 `/rm|rmdir|del|erase|rd|Remove-Item|ri/`，命中就返回 `deny` 并在理由里点名 `worktree_backup`。剥引号是为了让 `echo "rm -rf /"` 不误伤——那是写文本，不是删除。**误报的代价是一次重试，漏报的代价是不可恢复的数据丢失**，所以宁可严。
@@ -37,7 +37,7 @@ paths:
 
 **副本地址必须回到调用方手里。** 目录按会话哈希命名、没有索引也没有列举工具，所以地址只能由产生它的那次调用给出：`worktree_backup` 的结果逐条带 `<申报路径> (backup: <副本绝对路径>)`，`already-protected` 也带（第一次的副本才是权威的那份）；自动路径（`write` / `edit`）把地址写进 `dsh-worktree: protected <路径> before change, kept at <副本路径>` 日志。少了地址，"已保护"就只是一句话——恢复无从下手。**浏览器半边现在也有了列举入口**（`list` / `restore`，见下节），但那条路同样只认副本树本身，没有新增索引。
 
-**失败与并发**：复制失败绝不阻止工具执行（`tools/pre-execute` 里由 `installFileGuard` 的调用方捕获后记 `warn`，然后照常 `next()`），因为"这一个文件的旧版本没留到"不值得拒绝整次写入。归档删除失败只降级为返回值 `false`，不抛——会话已经结束，多留一个目录是浪费空间，不是错误答案。重复归档同一会话直接返回 `false`，所以归档路径触发两次不会自相竞争。
+**失败与并发**：复制失败绝不阻止工具执行（`tools/pre-execute` 里由 `installFileGuard` 的调用方捕获后记 `warn`，然后照常 `next()`），因为"这一个文件的旧版本没留到"不值得拒绝整次写入。归档删除失败抛出包含会话、目录及原因的错误，由生命周期监听器逐会话捕获、记日志并保留待重试，不影响归档完成或其他会话清理。成功返回是否存在过该目录；重复归档仍检查磁盘，不用永久“已清理”标记跳过删除。归档关闭该会话的新保护，复制过程中发生归档则复制后补清理，避免取消中的工具重建备份；取消归档调用 `resume` 恢复保护。两条归档触发由监听器串行执行。
 
 ## 列出与还原（`FileGuard.list` / `FileGuard.restore`）
 

@@ -181,6 +181,22 @@ export function installArchiveCleanup(
      * while this process runs is acted on.
      */
     const handled = new Set<string>(registry.archivedSessionIds.map(String))
+    // Only failures observed during this installation are eligible for retry.
+    const pendingBackups = new Set<string>()
+    const cleanBackups = async (): Promise<void> => {
+      for (const id of pendingBackups) {
+        if (!registry.archivedSessionIds.some(archivedId => String(archivedId) === id)) {
+          pendingBackups.delete(id)
+          continue
+        }
+        try {
+          await guard?.archive(id)
+          pendingBackups.delete(id)
+        } catch (error: unknown) {
+          scope.logger?.warn?.(`dsh-worktree: could not clean backups for archived session ${JSON.stringify(id)}: ${reason(error)}`)
+        }
+      }
+    }
     /**
      * End the backups — and the checkout — of every archive that arrived since
      * the previous call.
@@ -192,12 +208,19 @@ export function installArchiveCleanup(
      */
     const cleanArrived = async (): Promise<void> => {
       const archived = new Set(registry.archivedSessionIds.map(String))
-      for (const id of handled) if (!archived.has(id)) handled.delete(id)
+      for (const id of handled) {
+        if (archived.has(id)) continue
+        handled.delete(id)
+        pendingBackups.delete(id)
+        guard?.resume(id)
+      }
       const arrived = [...archived].filter(id => !handled.has(id))
-      if (arrived.length === 0) return
-      for (const id of arrived) handled.add(id)
-      for (const id of arrived) await guard?.archive(id)
-      await reconcile(scope, service, registry, arrived as SessionId[])
+      for (const id of arrived) {
+        handled.add(id)
+        pendingBackups.add(id)
+      }
+      await cleanBackups()
+      if (removeCheckouts) await reconcile(scope, service, registry, arrived as SessionId[])
     }
     scope.effect(
       () => scope.on('domain/changed', (change) => {
@@ -208,21 +231,26 @@ export function installArchiveCleanup(
         // own archive set is the authority on what is archived.
         if (change.domain !== WORKSPACE_DOMAIN) return
         if (change.operation !== 'put' || change.table !== '' || change.key !== '') return
-        serialize(cleanArrived)
+        serialize(async () => {
+          // Storage emits before registry.setState resumes its await and updates
+          // the registry snapshot. A microtask alone can still see the old set.
+          await new Promise<void>(resolve => { setImmediate(resolve) })
+          await cleanArrived()
+        })
       }),
       'dsh-worktree: clean up a session as soon as its archive is durable',
     )
     scope.effect(
       () => scope.on('workspace/session-stop', ({ sessionId }: ArchiveCleanupOptions) => {
-        // Read the archived set after the notification returns, so removal sees
-        // the set the archive just made durable. This leg still matters for
-        // stop-and-archive: it runs after the session's work was actually
-        // stopped, so a copy the dying turn made on its way out is swept too.
-        if (removeCheckouts) serialize(() => reconcile(scope, service, registry, [sessionId]))
-        // Backups belong to the session that asked for them, so the archive is
-        // where they end. This runs whether or not a checkout was removed: the
-        // guard protects any session's files, and most sessions have no checkout.
-        serialize(async () => { await guard?.archive(String(sessionId)) })
+        // This notification requests cancellation in parallel; it does not
+        // await turn settlement. FileGuard closes protection on archive so late
+        // work cannot recreate backups after this sweep.
+        serialize(async () => {
+          if (!registry.archivedSessionIds.some(id => String(id) === String(sessionId))) return
+          pendingBackups.add(String(sessionId))
+          await cleanBackups()
+          if (removeCheckouts) await reconcile(scope, service, registry, [sessionId])
+        })
       }),
       'dsh-worktree: remove the checkout of an archived session',
     )

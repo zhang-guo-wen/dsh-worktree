@@ -4,8 +4,8 @@
  * There are two triggers, because the registry reports only one of them. The
  * `workspace/session-stop` notification arrives when an archive stops running
  * work; an archive of an idle session — the sidebar's own action — writes the
- * durable set and notifies nobody, so the durable set is re-read on an interval
- * and every session that appeared in it since the previous sweep is cleaned up.
+ * durable set and notifies nobody, so a storage-domain event schedules a read
+ * after the workspace registry has published its new in-memory snapshot.
  *
  * These specs drive both against a stubbed worktree service so the removal
  * contract is asserted without a repository: which checkouts go, which are kept,
@@ -53,6 +53,7 @@ async function mount(options: {
   inspect?: WorktreeService['inspectLinkedCheckout']
   remove?: WorktreeService['remove']
   guard?: FileGuard
+  removeCheckouts?: boolean
 }) {
   const state = registry(options.workspaces, options.archived)
   const removed: Array<{ cwd: string; path: string }> = []
@@ -73,7 +74,7 @@ async function mount(options: {
       })
     },
   }).await()
-  installArchiveCleanup(ctx, service, options.guard, { removeCheckouts: true })
+  installArchiveCleanup(ctx, service, options.guard, { removeCheckouts: options.removeCheckouts ?? true })
   return { ctx, state, removed }
 }
 
@@ -313,6 +314,91 @@ describe('archive outcome record', () => {
  * as already handled.
  */
 describe('archives the workspace registry does not announce', () => {
+  it('reads the archive set after the storage promise resumes registry publication', async () => {
+    const { ctx, state, removed } = await mount({
+      workspaces: [{ id: 'w1', path: 'C:/repo-wt', sessionIds: ['s1'] }],
+      archived: [],
+    })
+    // Storage emits synchronously inside its queued operation; the registry
+    // updates its own snapshot only after awaiting that operation's promise.
+    await Promise.resolve().then(() => { ctx.emit('domain/changed', archiveWrite(['s1'])) })
+    state.archivedSessionIds.push('s1')
+    await vi.waitFor(() => expect(removed).toHaveLength(1))
+  })
+
+  it('keeps checkouts with removal disabled on both archive triggers', async () => {
+    const guard = new FileGuard({ directory: 'unused', denyDestructiveCommands: true })
+    const archive = vi.spyOn(guard, 'archive').mockResolvedValue(true)
+    const { ctx, state, removed } = await mount({
+      workspaces: [{ id: 'w1', path: 'C:/repo-wt', sessionIds: ['s1'] }],
+      archived: [], guard, removeCheckouts: false,
+    })
+    state.archivedSessionIds.push('s1')
+    ctx.emit('domain/changed', archiveWrite(['s1']))
+    await vi.waitFor(() => expect(archive).toHaveBeenCalledTimes(1))
+    ctx.emit('workspace/session-stop', { sessionId: 's1' })
+    await vi.waitFor(() => expect(archive).toHaveBeenCalledTimes(2))
+    expect(removed).toEqual([])
+    expect(state.deleted).toEqual([])
+  })
+
+  it('retries failed backups on later events without blocking other sessions or checkouts', async () => {
+    const guard = new FileGuard({ directory: 'unused', denyDestructiveCommands: true })
+    const archive = vi.spyOn(guard, 'archive')
+      .mockRejectedValueOnce(new Error('locked backup directory'))
+      .mockResolvedValue(true)
+    const { ctx, state, removed } = await mount({
+      workspaces: [{ id: 'w1', path: 'C:/repo-wt', sessionIds: ['s1'] }],
+      archived: ['historical'], guard,
+    })
+    ctx.logger.warn = vi.fn()
+    state.archivedSessionIds.push('s1', 's2')
+    ctx.emit('domain/changed', archiveWrite(state.archivedSessionIds))
+    await vi.waitFor(() => expect(removed).toHaveLength(1))
+    expect(archive.mock.calls).toEqual([['s1'], ['s2']])
+    expect(ctx.logger.warn).toHaveBeenCalledWith(expect.stringContaining('s1'))
+    ctx.emit('domain/changed', archiveWrite(state.archivedSessionIds))
+    await vi.waitFor(() => expect(archive.mock.calls).toEqual([['s1'], ['s2'], ['s1']]))
+    ctx.emit('workspace/session-stop', { sessionId: 's2' })
+    await vi.waitFor(() => expect(archive).toHaveBeenCalledTimes(4))
+    expect(archive.mock.calls[3]).toEqual(['s2'])
+    expect(removed).toHaveLength(1)
+  })
+
+  it('retries a stop-triggered backup failure on a later workspace write', async () => {
+    const guard = new FileGuard({ directory: 'unused', denyDestructiveCommands: true })
+    const archive = vi.spyOn(guard, 'archive')
+      .mockRejectedValueOnce(new Error('locked backup directory'))
+      .mockResolvedValue(true)
+    const { ctx, state } = await mount({ workspaces: [], archived: ['s1'], guard })
+    ctx.logger.warn = vi.fn()
+    ctx.emit('workspace/session-stop', { sessionId: 'not-archived' })
+    ctx.emit('workspace/session-stop', { sessionId: 's1' })
+    await vi.waitFor(() => expect(ctx.logger.warn).toHaveBeenCalled())
+    expect(archive.mock.calls).toEqual([['s1']])
+    ctx.emit('domain/changed', archiveWrite(state.archivedSessionIds))
+    await vi.waitFor(() => expect(archive.mock.calls).toEqual([['s1'], ['s1']]))
+  })
+
+  it('forgets failed backups and resumes protection when a session is unarchived', async () => {
+    const guard = new FileGuard({ directory: 'unused', denyDestructiveCommands: true })
+    const archive = vi.spyOn(guard, 'archive').mockRejectedValue(new Error('locked'))
+    const resume = vi.spyOn(guard, 'resume')
+    const { ctx, state } = await mount({ workspaces: [], archived: [], guard })
+    ctx.logger.warn = vi.fn()
+    state.archivedSessionIds.push('s1')
+    ctx.emit('domain/changed', archiveWrite(['s1']))
+    await vi.waitFor(() => expect(archive).toHaveBeenCalledTimes(1))
+    state.archivedSessionIds.splice(0)
+    ctx.emit('domain/changed', archiveWrite([]))
+    await vi.waitFor(() => expect(resume).toHaveBeenCalledWith('s1'))
+    expect(archive).toHaveBeenCalledTimes(1)
+    archive.mockResolvedValue(true)
+    state.archivedSessionIds.push('s1')
+    ctx.emit('domain/changed', archiveWrite(['s1']))
+    await vi.waitFor(() => expect(archive).toHaveBeenCalledTimes(2))
+  })
+
   it('cleans up a session the moment its archive is durable', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-archive-event-'))
     try {

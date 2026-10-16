@@ -218,8 +218,13 @@ export class FileGuard {
    * change there.
    */
   private readonly created = new Map<string, Set<string>>()
-  /** Session keys whose backups were already removed, so a repeated archive is cheap. */
+  /** Closed sessions cannot recreate backups while their cancelled tools settle. */
   private readonly archived = new Set<string>()
+
+  /** Allow protection again after an explicit unarchive. */
+  resume(session: string): void {
+    this.archived.delete(sessionKeyOf(session))
+  }
 
   /**
    * @param options - where copies are kept and the shell policy.
@@ -244,6 +249,7 @@ export class FileGuard {
     const placement = this.place(agent, declared)
     if (placement === undefined) return { path: declared, outcome: 'absent' }
     const { sessionKey, relativePath } = placement
+    if (this.archived.has(sessionKey)) return { path: declared, outcome: 'absent' }
     const destination = join(this.directory, sessionKey, relativePath)
     const known = this.protectedFor(sessionKey)
     // The first copy is the state from before anything touched the file, so a
@@ -273,6 +279,12 @@ export class FileGuard {
 
     await mkdir(dirname(destination), { recursive: true })
     await copyFile(target, destination)
+    // An archive can arrive while mkdir/copyFile is in flight. Sweep once more
+    // rather than leaving a late copy behind after the lifecycle cleanup.
+    if (this.archived.has(sessionKey)) {
+      await this.archive(agent!.session!.id!)
+      return { path: declared, outcome: 'absent' }
+    }
     known.add(relativePath)
     return { path: declared, outcome: 'protected', backup: destination }
   }
@@ -364,10 +376,9 @@ export class FileGuard {
    */
   async archive(session: string): Promise<boolean> {
     const key = sessionKeyOf(session)
+    this.archived.add(key)
     this.protected_.delete(key)
     this.created.delete(key)
-    if (this.archived.has(key)) return false
-    this.archived.add(key)
     const directory = join(this.directory, key)
     // Asked before the removal because a sweep calls this for every archived
     // session, and the log line is only worth printing when something was there.
@@ -375,14 +386,12 @@ export class FileGuard {
     try {
       await rm(directory, { recursive: true, force: true })
     } catch (error: unknown) {
-      // The session is over either way; a backup directory that survives is
-      // wasted space, never a wrong answer, so the failure is dropped rather
-      // than thrown into the archive path.
-      void error
-      return false
+      // The lifecycle listener logs this and retains it for a later retry.
+      // Never mark a failed removal as handled, or confuse it with an absent copy.
+      throw new Error(`could not remove backups for session ${JSON.stringify(session)} at ${JSON.stringify(directory)}: ${String(error)}`, { cause: error })
     }
     if (present) console.log(`dsh-worktree: removed the backups of archived session ${session}`)
-    return true
+    return present
   }
 
   /**
@@ -408,6 +417,8 @@ export class FileGuard {
       }
       return next()
     }
+    // A path argument alone is not a write intent: read/read_image use it too.
+    if (name !== 'write' && name !== 'edit') return next()
     const declared = fileTarget(execution.arguments)
     if (declared === undefined) return next()
     // Awaited on purpose: the copy must be durable before the tool body runs, or

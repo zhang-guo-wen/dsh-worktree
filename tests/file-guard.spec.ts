@@ -18,7 +18,12 @@ import { existsSync } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, rm: vi.fn(actual.rm), copyFile: vi.fn(actual.copyFile) }
+})
 import { FileGuard, installFileGuard } from '../src/file-guard.ts'
 
 /** Temporary roots created by one case, removed when it finishes. */
@@ -318,6 +323,20 @@ describe('the shell gate', () => {
 })
 
 describe('protecting through the tool hook', () => {
+  it.each(['read', 'read_image', 'unknown', undefined])('does not back up a path for %s', async (name) => {
+    const { workspace, root, guard } = await scratch()
+    const file = join(workspace, 'read-only.txt')
+    await writeFile(file, 'before')
+    const next = vi.fn(async () => ({ kind: 'allow' as const }))
+    await guard.beforeTool({ name, arguments: { file_path: file }, agent: agent(workspace) }, next)
+    expect(next).toHaveBeenCalledTimes(1)
+    expect(existsSync(root)).toBe(false)
+    // Reading must not establish the authoritative copy for a later edit.
+    await writeFile(file, 'changed externally')
+    await guard.beforeTool(writeCall(workspace, file, 'edit'), next)
+    expect(await readFile(join(await sessionDirectory(root), 'read-only.txt'), 'utf8')).toBe('changed externally')
+  })
+
   it('lands the copy before the delegated call may run', async () => {
     const { workspace, root, guard } = await scratch()
     const file = join(workspace, 'race.txt')
@@ -345,6 +364,42 @@ describe('protecting through the tool hook', () => {
 })
 
 describe('deleting a session archive', () => {
+  it('reports a failed removal and retries instead of treating it as completed', async () => {
+    const { workspace, root, guard } = await scratch()
+    const file = join(workspace, 'retry.txt')
+    await writeFile(file, 'before')
+    await guard.protect(agent(workspace), file)
+    const directory = await sessionDirectory(root)
+    vi.mocked(rm).mockRejectedValueOnce(new Error('EPERM: locked'))
+    await expect(guard.archive('session-1')).rejects.toThrow(JSON.stringify(directory))
+    expect(existsSync(directory)).toBe(true)
+    expect(await guard.archive('session-1')).toBe(true)
+    expect(existsSync(directory)).toBe(false)
+  })
+
+  it('does not recreate backups for late tools of an archived session', async () => {
+    const { workspace, root, guard } = await scratch()
+    const file = join(workspace, 'late.txt')
+    await writeFile(file, 'before')
+    await guard.archive('session-1')
+    expect((await guard.protect(agent(workspace), file)).outcome).toBe('absent')
+    expect(existsSync(root)).toBe(false)
+  })
+
+  it('sweeps a copy that finishes after the archive', async () => {
+    const { workspace, root, guard } = await scratch()
+    const file = join(workspace, 'racing.txt')
+    await writeFile(file, 'before')
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    vi.mocked(copyFile).mockImplementationOnce(async (source, destination) => {
+      await guard.archive('session-1')
+      await mkdir(dirname(String(destination)), { recursive: true })
+      await actual.copyFile(source, destination)
+    })
+    expect((await guard.protect(agent(workspace), file)).outcome).toBe('absent')
+    expect(await readdir(root)).toEqual([])
+  })
+
   it('removes that session backups and leaves the other session alone', async () => {
     const { workspace, root, guard } = await scratch()
     const mine = join(workspace, 'mine.txt')
@@ -379,6 +434,7 @@ describe('deleting a session archive', () => {
     await writeFile(file, 'first')
     await guard.protect(agent(workspace), file)
     await guard.archive('session-1')
+    guard.resume('session-1')
     await writeFile(file, 'second')
 
     expect((await guard.protect(agent(workspace), file)).outcome).toBe('protected')

@@ -30,7 +30,7 @@ Copies live in `~/.agents/file-guard/<session hash>/` and **mirror the workspace
 
 Two things trigger a copy:
 
-- **Automatic**: when a tool names its target in its own arguments (`write`, `edit`), the copy lands *before* the write, at about 1 ms per file.
+- **Automatic**: only `write` and `edit` copy their target *before* the write, at about 1 ms per file. Read-only tools such as `read` and `read_image` do not create backups.
 - **Declared by the model**: before changing files whose targets no argument names, the AI is asked to call the `worktree_backup` tool with those paths. It has no scope limit — paths outside the working directory and on other drives are accepted. **The result names the copy's absolute path**, so restoring a file never requires searching for it.
 
 **Destructive shell commands are refused once.** A `bash` / `pwsh` command that looks like it deletes files (`rm`, `del`, `rd`, `Remove-Item`, and so on) is denied, and the model is told to declare its targets through `worktree_backup` before retrying — a deletion cannot be recovered after it runs. Quoted spans do not count, so `echo "rm -rf /"` is not refused. The switch can be turned off in settings.
@@ -39,7 +39,7 @@ Rules worth knowing:
 
 - **One copy per file.** A later change in the same session does not replace it, because the version worth keeping is the one from before the first change.
 - **Only files that already exist.** A file the AI creates has no prior state. It *is* copied when a later session changes it — by then it exists.
-- **One directory per session, deleted when the session is archived.** The archive's own durable write is the trigger, so the copies go as soon as it lands — a plain archive and a stop-and-archive behave the same. Only an archive that happens while the host runs is cleaned; earlier ones are never deleted retroactively.
+- **One directory per session, deleted when the session is archived.** The archive's own durable write is the trigger, so the copies go as soon as it lands — a plain archive and a stop-and-archive behave the same. Failures log the session, directory, and reason and retry on later archive-related events; cancelling tools cannot recreate an archived session's backups. Only an archive that happens while the host runs is cleaned; earlier ones are never deleted retroactively.
 - **No size cap.** One full set of copies is roughly the size of the workspace; measured on one machine, 243,529 files came to 12.72 GB.
 - **Writes outside the working directory are not automatic**, so they rely on the AI declaring them through `worktree_backup`. A change the AI never declares is not copied — which is why destructive commands are refused until it declares them.
 
