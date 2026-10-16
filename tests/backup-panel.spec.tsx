@@ -93,10 +93,22 @@ describe('the file-backup page', () => {
     const rows = screen.getAllByRole('listitem')
     expect(rows.map(row => row.getAttribute('data-backup-row'))).toEqual(['docs/gone.md', 'src/a.ts'])
     expect(rows.map(row => row.getAttribute('data-backup-file'))).toEqual(['deleted', 'modified'])
-    expect(screen.getByText(copy('sidebar.state.deleted'))).toBeDefined()
-    expect(screen.getByText(copy('sidebar.state.modified'))).toBeDefined()
+    expect(screen.queryByText(copy('sidebar.state.deleted'))).toBeNull()
+    expect(screen.queryByText(copy('sidebar.state.modified'))).toBeNull()
+    expect(screen.getByText('docs/gone.md').tagName).toBe('S')
+    expect(screen.getByText('src/a.ts').closest('s')).toBeNull()
     expect(screen.getByRole('button', { name: restoreName('docs/gone.md') })).toBeDefined()
     expect(screen.getByRole('button', { name: restoreName('src/a.ts') })).toBeDefined()
+  })
+
+  it('removes the deletion strike after restoring a deleted file', async () => {
+    await mount({
+      list: async () => ({ ok: true, value: { entries: [entry('gone.md', 'deleted')] } }),
+    })
+    expect(screen.getByText('gone.md').tagName).toBe('S')
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: restoreName('gone.md') })) })
+    expect(screen.getByText('gone.md').closest('s')).toBeNull()
+    expect(screen.getByText(copy('sidebar.restored'))).toBeDefined()
   })
 
   it('puts one copy back and reports the result on that row alone', async () => {

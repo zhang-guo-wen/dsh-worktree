@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Button, IconRefreshOutlineRegular, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: pulls the right Sidebar's tab seat and its `useTabInfo` hook.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
@@ -177,15 +177,14 @@ function Row({ entry, row, onRestore, t }: {
   return (
     <li className={css.row} data-backup-row={entry.relative} data-backup-file={entry.state}>
       <div className={css.rowText}>
-        <span className={css.name} title={t('sidebar.copyAt', { path: entry.backup })}>{entry.name}</span>
-        <span className={css.meta}>
-          <Tag tone={entry.state === 'deleted' ? 'danger' : 'warning'}>
-            {t(entry.state === 'deleted' ? 'sidebar.state.deleted' : 'sidebar.state.modified')}
-          </Tag>
-          {row?.kind === 'failed' ? (
-            <span className={css.failed}>{t('sidebar.restoreFailed', { message: row.message })}</span>
-          ) : null}
+        <span className={css.name} title={t('sidebar.copyAt', { path: entry.backup })}>
+          {entry.state === 'deleted' && row?.kind !== 'restored'
+            ? <s aria-label={`${entry.name} (${t('sidebar.state.deleted')})`}>{entry.name}</s>
+            : entry.name}
         </span>
+        {row?.kind === 'failed' ? (
+          <span className={css.failed}>{t('sidebar.restoreFailed', { message: row.message })}</span>
+        ) : null}
       </div>
       <Button
         variant="outline"

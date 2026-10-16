@@ -47,7 +47,7 @@ For complete history, or recovery across machines and time, use Git commits. Thi
 
 ## Restoring from the sidebar
 
-**On by default.** The right sidebar offers a **File backup** page — open it from the sidebar's own Start page, and use the page-refresh shortcut inside it to read the list again. It lists the files **this session changed or deleted**, one flat row each and no directory tree, with the path, whether the file is *Modified* or *Deleted*, and a **Restore** button.
+**On by default.** The right sidebar offers a **File backup** page — open it from the sidebar's own Start page, and use the page-refresh shortcut inside it to read the list again. It lists the files **this session changed or deleted**, one flat row each and no directory tree, with only the path and a **Restore** button, without state badges. Deleted paths are struck through; a successful restore removes the strike.
 
 - **Modified** means the file's content no longer matches its copy; **Deleted** means the file is gone. A copy whose file is still byte-identical is left out, because there is nothing to restore.
 - **Restore** writes that one copy back over its file, creating the directories again if the file had been deleted. The copy itself is kept, so the same row can put the file back after a later change.

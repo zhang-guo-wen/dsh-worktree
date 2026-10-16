@@ -3,7 +3,7 @@
    height outright and the list is the one scroller under a fixed toolbar.
 
    The list is flat by design — one row per file, the path as the row's own
-   label, the state as a tag from the shared palette, and the restore control on
+   label (struck through when deleted), and the restore control on
    the trailing edge. There are no folder rows and no indentation: the question
    this page answers is which files changed, not where they live. Every colour
    is a `--dsw-alias-*` semantic token, so the light and dark themes stay the
@@ -91,13 +91,8 @@
   overflow-wrap: anywhere;
 }
 
-.meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-tertiary);
+.name s {
+  text-decoration-line: line-through;
 }
 
 /* A refused read and a refused restore both carry the failure ink, so the two
