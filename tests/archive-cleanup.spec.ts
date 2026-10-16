@@ -9,10 +9,15 @@
  */
 
 import { Context } from '@deepseek-ai/cordis'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   clearArchiveOutcomes, installArchiveCleanup, probeArchiveOutcome,
 } from '../src/archive-cleanup.ts'
+import { FileGuard } from '../src/file-guard.ts'
 import type { WorktreeService } from '../src/service.ts'
 
 /** The outcome store is module-level, so each case starts from an empty one. */
@@ -43,6 +48,7 @@ async function mount(options: {
   sessions?: Record<string, LiveSession>
   inspect?: WorktreeService['inspectLinkedCheckout']
   remove?: WorktreeService['remove']
+  guard?: FileGuard
 }) {
   const state = registry(options.workspaces, options.archived)
   const removed: Array<{ cwd: string; path: string }> = []
@@ -63,7 +69,7 @@ async function mount(options: {
       })
     },
   }).await()
-  installArchiveCleanup(ctx, service)
+  installArchiveCleanup(ctx, service, options.guard)
   return { ctx, state, removed }
 }
 
@@ -216,5 +222,31 @@ describe('archive outcome record', () => {
     })
     second.ctx.emit('workspace/session-stop', { sessionId: 's2' })
     await vi.waitFor(() => expect(probeArchiveOutcome('C:/repo-wt')).toEqual({ outcome: 'removed' }))
+  })
+
+  it('deletes the archived session file backups, alongside the checkout removal', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-archive-guard-'))
+    const workspace = join(root, 'workspace')
+    await mkdir(workspace, { recursive: true })
+    const file = join(workspace, 'notes.txt')
+    await writeFile(file, 'before')
+    const guard = new FileGuard({ directory: join(root, 'guard'), denyDestructiveCommands: true })
+    await guard.protect({ session: { id: 's1', header: { cwd: workspace } } }, file)
+    expect((await readdir(join(root, 'guard'), { withFileTypes: true })).filter(entry => entry.isDirectory())).toHaveLength(1)
+
+    // The same notification that removes a checkout also ends the session's
+    // backups, so the guard is wired the same way.
+    const { ctx, state } = await mount({
+      workspaces: [{ id: 'w1', path: workspace, sessionIds: ['s1'] }],
+      archived: ['s1'],
+      sessions: { s1: { header: { cwd: workspace } } },
+      guard,
+    })
+    ctx.emit('workspace/session-stop', { sessionId: 's1' })
+    await vi.waitFor(() => expect(state.deleted).toEqual(['w1']))
+    await vi.waitFor(() => expect(existsSync(join(root, 'guard'))).toBe(true))
+    expect((await readdir(join(root, 'guard'), { withFileTypes: true })).filter(entry => entry.isDirectory())).toHaveLength(0)
+
+    await rm(root, { recursive: true, force: true })
   })
 })

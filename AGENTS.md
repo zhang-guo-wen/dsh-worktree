@@ -16,19 +16,21 @@
 |---|---|---|
 | `worktree` 服务 | `src/service.ts` | 仓库根解析、创建/列举/删除 linked worktree、按布局推导默认路径、linked checkout 探测（`inspectLinkedCheckout`）；git 调用与超时在 `src/git.ts`，主仓库回溯在 `src/repository.ts`，`worktree list --porcelain` 解析在 `src/porcelain.ts` |
 | 归档清理 | `src/archive-cleanup.ts` | 订阅 `workspace/session-stop`（归档落盘后的通知），删掉被归档会话的 linked checkout 与其工作区记录；同时把结果记进 outcome 表供浏览器半边读取 |
+| 改动前保护 | `src/file-guard.ts` + `src/backup-tool.ts` | AI 第一次改动某个已存在文件之前，把它的字节复制到 `~/.agents/file-guard/<会话哈希>/`。自动路径靠 `tools/pre-execute` 的 `file_path`，明确路径靠模型调 `worktree_backup`；删除命令被拒；会话归档时整个目录删掉。不碰 `fs/*`。见「改动前保护」一节 |
 | Host 路由 | `src/route.ts` | `POST /worktree/api/{start,list,branches,checkout}`：原子地"建 checkout → 注册工作区 → 开会话 → 把会话挂进该工作区"，并给界面提供本地分支列表与归档结果探测；开会话本身在 `src/session.ts` |
 | 浏览器控件 | `src/client/` | 新会话屏幕 `选择工作区 / 模式` 那一行右侧的一个胶囊：左边是本地分支下拉，右边是 `worktree` 勾选；`WorktreeChip.tsx` 渲染，`seat-store.ts` 管状态，`api.ts` 是路由客户端 |
 | 草稿迁移 | `src/client/draft-transfer.ts` | 切到新建 checkout 里的会话之前，把原输入框里未发送的草稿搬过去（文字、引用、附件一起），并保证任何一步失败都完整回滚、原草稿不丢 |
 | 归档通知（浏览器） | `src/client/checkout-notice-store.ts` + `checkout-notice.tsx` | 跟随 Workspace 列表，有人归档后行消失就探测 Host 的结果，**成功/保留各弹一条独立 toast**（`shell.overlay` 座位）；纯逻辑与渲染分开，前者能在自足 suite 里跑 |
-| 设置页 | `src/client/SettingsSection.tsx` | 设置 → **Worktree**，标题「worktree 配置」，三行：**创建子仓库**开关（默认关）、**扫描层级**（默认 1）、**worktree 存储位置**（工作区内 / 仓库同级 / 用户目录；说明文字跟着选项显示对应路径）。无「恢复默认」或「保存」按钮。行式左右布局（同「通用设置」）。有效修改自动保存并即时生效，不需要重启；`settings-store.ts` 串行执行 revision-fenced 写入，保存期间的新修改排队保留，空值或非正整数扫描层级不写入配置，失败保留草稿并提示 |
+| 设置页 | `src/client/SettingsSection.tsx` | 设置 → **Worktree**，标题「worktree 配置」，五行：**创建子仓库**开关（默认关）、**扫描层级**（默认 1）、**会话文件保护**开关（默认**开**）、**拦截删除命令**开关（默认开，需前者开启才可用）、**worktree 存储位置**（工作区内 / 仓库同级 / 用户目录；说明文字跟着选项显示对应路径）。无「恢复默认」或「保存」按钮。行式左右布局（同「通用设置」）。有效修改自动保存并即时生效，不需要重启；`settings-store.ts` 串行执行 revision-fenced 写入，保存期间的新修改排队保留，空值或非正整数扫描层级不写入配置，失败保留草稿并提示。字段的取值转换在 `src/client/settings-fields.ts`（无运行时依赖，所以可被自足 suite 直接测） |
+| 设置页字段词汇 | `src/client/settings-fields.ts` | 五个可编辑字段的集合、`formatSetting` / `parseSetting`、以及两个开关的 schema 默认值。**故意不 import `settings-store.ts`**：store 会拉进 `@deepseek-ai/dsh-client-store`（运行时依赖 `zustand`），自足 suite 解析不到。同 `policy.ts` 的理由 |
 | 两侧共享 | `src/policy.ts` / `src/branch-rule.ts` / `src/validate.ts` | 默认值与取值集合（`policy.ts` 不 import 任何东西，浏览器 bundle 才能直接用）、Host 与浏览器必须逐字一致的分支名规则、路径与目录校验 |
 
-**本插件不注册任何模型工具。** 建 / 列 / 删 checkout 都是用户操作，界面负责全部三件；唯一的自动删除是归档回调（见「归档清理」）。曾经的 `src/tools.ts`（`worktree_create` / `worktree_list` / `worktree_remove`）与 `createToolName` / `listToolName` / `removeToolName` 三个配置字段已随此决定删除。
+**界面上建 / 列 / 删 checkout 都是用户操作，模型没有对应的工具。** 界面负责全部三件；唯一的自动删除是归档回调（见「归档清理」）。模型工具只有一个：`fileGuard` 默认开，因此默认形态就会注册 `worktree_backup`（见「改动前保护」），关掉它才没有工具；注册走 `ctx.inject(['tools'], …)`，所以没有工具注册表的部署照样挂载。曾经的 `src/tools.ts`（`worktree_create` / `worktree_list` / `worktree_remove`）与 `createToolName` / `listToolName` / `removeToolName` 三个配置字段已随此决定删除。
 
 - `lib/` —— 构建产物：**已提交进仓库**（`index.mjs` host + `client.js` 浏览器 handoff），
   这样别人可以直接从 git 安装。改完源码**记得 `npm run build` 并把 `lib/` 一起提交**。
 - `cordis.patch.yml` —— 把插件行插入组合的 bundle 层。
-- `tests/` —— 13 个 spec：`service` / `porcelain` / `route` / `plugin` / `session` / `nested` / `archive-cleanup` / `checkout-notice` / `client` 属于自足子集，
+- `tests/` —— 15 个 spec：`service` / `porcelain` / `route` / `plugin` / `session` / `nested` / `archive-cleanup` / `checkout-notice` / `client` / `file-guard` / `settings-fields` 属于自足子集，
   `seat` / `registration` / `navigation` / `settings` 四个浏览器半边 spec 需要 checkout。两个 runner 见「测试」。
 
 ## 组合接线（cordis.patch.yml）
@@ -45,7 +47,7 @@
 
 行 id 是 `worktree`：它同时是 host 插件导出的 `name` 与设置命名空间 `SETTINGS_NAMESPACE`，也是 `/worktree/api` 前缀的由来。
 
-host 插件导出 `{ name, Config, apply }`，**没有 `inject`**：本插件不注册模型工具，所以对工具注册表没有硬依赖。`webServer` / `workspaceRegistry` / `agents` 由 `registerRoute` 里的 `ctx.inject` 等，`workspaceRegistry` 由 `installArchiveCleanup` 里的 `ctx.inject` 等，settings 也用 `ctx.inject(['settings'], …)` 软探测——缺 `webServer` / `workspaceRegistry` / `agents` 之一就不挂路由（handler 三个都要用），缺 settings 就只是不能在线改策略，服务照常提供，插件不会整体不激活。
+host 插件导出 `{ name, Config, apply }`，**没有 `inject`**：模型工具只有守卫那一个，而且注册也走 `ctx.inject(['tools'], …)`，所以对工具注册表没有硬依赖。`webServer` / `workspaceRegistry` / `agents` 由 `registerRoute` 里的 `ctx.inject` 等，`workspaceRegistry` 由 `installArchiveCleanup` 里的 `ctx.inject` 等，settings 也用 `ctx.inject(['settings'], …)` 软探测——缺 `webServer` / `workspaceRegistry` / `agents` 之一就不挂路由（handler 三个都要用），缺 settings 就只是不能在线改策略，缺 `tools` 就只是不注册 `worktree_backup`（守卫自己的 `tools/pre-execute` 监听照常）。服务照常提供，插件不会整体不激活。
 
 浏览器半边注册三处座位：`conversation.input.dock`（id `worktree`，order -10，排在最前）、`settings.section`（id `worktree`，order 30）与 `shell.overlay`（id `worktree-checkout`，order 100，归档结果的第二条通知），并注册 `worktree` 字典。
 
@@ -96,7 +98,7 @@ npm run build     # tsdown（host → lib/index.mjs）+ node build-client.mjs（
 
 client 半边相反：bundle 按内容 revision 提供，重建后刷新页面即可加载新产物；`HANDOFF_ID` 必须始终等于包名，不得用于缓存失效。必要时强刷浏览器。
 
-一个例外是「配置」里标为 volatile 的三个字段：它们由 Host 在文档更新后装回运行中的服务实例，**不需要重启**。
+一个例外是「配置」里标为 volatile 的字段：它们由 Host 在文档更新后装回运行中的服务实例，**不需要重启**。设置页呈现其中五项（见「配置」）。
 
 ## 设计约束（为什么这么做）
 
@@ -163,6 +165,32 @@ Workspace 的身份判据是 **`fs.realpath` 之后的路径字符串相等**（
 
 三条不变量：**不拦截归档**（只订阅通知，失败全部降级为日志）；**不丢工作**（脏目录一律保留）；**并发串行**（多个归档同时到达时由模块内的 promise 链排队）。
 
+### 改动前保护（`src/file-guard.ts` + `src/backup-tool.ts`）
+
+一个独立的关注点：**改动发生之前**把文件当前内容复制走，这样"改坏了"和"被删了"还有得捡。它不参与 checkout 的创建与删除。
+
+**成本全在"怎么发现要备份什么"，不在备份本身。** 本机实测：复制一个已知路径的文件 **0.94 ms**（大文件走带宽，268 MB 用 0.43 s，约 623 MB/s），而**枚举**这棵树要按秒计——Node `opendir` 走完 243,529 个文件 11.9 s，带 `stat` 36.5 s；PowerShell 管道更慢（全树 24.3 s）。所以"每次工具调用前全树扫描"物理上不成立，而"只扫描"又会漏掉它没看见的写入。发现机制因此是精准的，两条路：
+
+| 触发 | 机制 | 覆盖 |
+|---|---|---|
+| `tools/pre-execute`（waterfall） | 从参数取 `file_path`，`await` 复制完成再 `next()`——先落盘后写入，**不赛跑** | `write` / `edit` |
+| 模型调 `worktree_backup` | 工具无路径限制，绝对路径照收 | bash / run_code / 重命名 / 第三方脚本 / **工作区外与其他盘** |
+
+**删除命令被拒。** `bash` / `pwsh` 的命令文本先剥掉引号再匹配 `/rm|rmdir|del|erase|rd|Remove-Item|ri/`，命中就返回 `deny` 并在理由里点名 `worktree_backup`。剥引号是为了让 `echo "rm -rf /"` 不误伤——那是写文本，不是删除。**误报的代价是一次重试，漏报的代价是不可恢复的数据丢失**，所以宁可严。
+
+**不碰 `fs/*`，这是刻意的。** `fs/write-intent` 看起来正是"写入前"的钩子，但它已经被内置的 `@deepseek-ai/dsh-fs-observation-policy` 独占，且那个实现**不调用 `next()`**（`packages/fs/fs-observation-policy/src/index.ts` 的注释写明 single-slot 语义）：后注册的监听器永远收不到调用，抢占它则会破坏"改文件前必须先读"的既有策略。更关键的是整个 `ctx.fs` 只覆盖 `write` / `edit` 两个工具，而 `write` 的 schema 只收 UTF-8 字符串、fs 层对二进制直接报 `FS_NOT_TEXT`——**`docx` / `pptx` / `xlsx` 一个都不经过它**，只能走 bash，正好落在最需要保护的那一类里。`tools/pre-execute` 是工具管道的入口，覆盖所有工具。
+
+**四条不变量**：
+
+1. **第一次的副本是权威的。** 同一会话里同一文件第二次被改**不覆盖**第一份——否则备份里存的就是已经被改坏的内容。这是整套逻辑里最要紧的一条。
+2. **只保护已存在的文件。** AI 新建的文件没有"改动前"状态；删掉它只是回到原本就不存在。这个豁免只持续到"看着它出现的那个进程"结束：**新会话里同一文件已存在，首次改动就会备份**（实测）——那才是让生成物多轮迭代可回退的关键。
+3. **没有大小上限。** 本机实测：243,529 个文件里超过 256 KB 的只有 3,472 个，却占 **79.5% 的体积**。照抄 VS Code 那个 256 KB 上限（`workbench.localHistory.maxFileSize`）等于放弃五分之四的数据；而全量一份副本才 12.72 GB。
+4. **每个会话一份，会话归档即删除。** 目录按会话 id 的 sha256 前 32 位命名。不按工作区共享，是因为工作区会比它的所有会话活得更久，那时无法回答"还有谁需要这些文件"；而按会话切分让生命周期变成一对一，删除是 O(1) 且不会误删别的会话的副本。代价是同一文件被两个会话改过就存两份——按用户"每文件一份"的规则这是有界的小开销。
+
+**存储**：`~/.agents/file-guard/<会话 id sha256 前 32 位>/`，工作区内的文件照抄相对路径，恢复就是往回拷；工作区外的文件放在 `external/` 下并保留自己的路径（盘符的 `:` 去掉，`C:\a\b` → `external/C/a/b`），所以每个副本都能直接定位，**不需要任何索引或 manifest**。字节级复制，与格式无关，`.docx` 与 `.txt` 一视同仁（实测 4,105 字节的 zip 结构逐字节相同）。
+
+**失败与并发**：复制失败绝不阻止工具执行（`tools/pre-execute` 里由 `installFileGuard` 的调用方捕获后记 `warn`，然后照常 `next()`），因为"这一个文件的旧版本没留到"不值得拒绝整次写入。归档删除失败只降级为返回值 `false`，不抛——会话已经结束，多留一个目录是浪费空间，不是错误答案。重复归档同一会话直接返回 `false`，所以归档路径触发两次不会自相竞争。
+
 ### 归档结果与第二条通知
 
 Worktree 行消失时，浏览器看不到"目录是被删了还是被保留了"——它只看得到行。所以 Host 把结果记下来，浏览器来问：
@@ -199,10 +227,12 @@ Worktree 行消失时，浏览器看不到"目录是被删了还是被保留了"
 - id: worktree
   name: '@guowenzhang/dsh-worktree'
   config:
-    # 设置页的三行（volatile：保存即时生效，不用重启）
+    # 设置页的五项（volatile：保存即时生效，不用重启）
     nestedRepositories: none        # none（默认，只建父仓库）| submodules | all —— 设置页上就是「创建子仓库」开关：开 = all，关 = none
     nestedScanDepth: 1              # 递归扫描目录层数（正整数；1 = 只看直接子目录）
     defaultPath: agents             # agents（默认，工作区内的 .agents/worktree/）| sibling（仓库同级）| home（用户目录 ~/.agents/worktree）
+    fileGuard: true                 # 见「改动前保护」：开（默认）| 关
+    denyDestructiveCommands: true   # 删除类命令是否拒掉并要求先申报目标（fileGuard 关时无效）
     # 以下只在启动时生效，改完要重启 host
     agentsDirectory: .agents/worktree   # defaultPath: agents 时的工作区子目录；缺的层级会自动创建
     gitTimeoutMs: 60000             # 单次 git 调用的上限（子模块拉网络时会用满它）
@@ -210,13 +240,17 @@ Worktree 行消失时，浏览器看不到"目录是被删了还是被保留了"
     removeOnSessionArchive: true    # 归档会话时是否删掉它的 linked checkout（默认开）
 ```
 
-设置页只放**会改变 checkout 长什么样**的三项；`agentsDirectory`、`gitTimeoutMs`、`startSessionRoute`、`removeOnSessionArchive` 是部署形态，留在 profile 的 patch 里。volatile 字段要求 harness 的 `schemastery` 提供 `.volatile()`（**≥ 3.18.4**）——这也是本插件 `devDependencies` 里那个版本下限的来由；更早的 harness 只支持启动时配置。
+设置页放这五项；`agentsDirectory`、`gitTimeoutMs`、`startSessionRoute`、`removeOnSessionArchive` 是部署形态，留在 profile 的 patch 里。volatile 字段要求 harness 的 `schemastery` 提供 `.volatile()`（**≥ 3.18.4**）——这也是本插件 `devDependencies` 里那个版本下限的来由；更早的 harness 只支持启动时配置。
+
+**两个开关的 schema 默认都是 `true`，而设置页渲染的是"缺省即默认"**：`src/client/settings-fields.ts` 的 `SWITCH_DEFAULT` 必须与 `policy.ts` 的 `DEFAULT_FILE_GUARD` / `DEFAULT_DENY_DESTRUCTIVE_COMMANDS` 同步。若某天只改一处，页面会把"开"画成"关"，用户就会去"修"一个本来就对的设置——这比不显示更糟。
 
 `agentsDirectory` 必须是工作区相对目录（不能是绝对路径、不能带 `..` 段），`nestedScanDepth` 必须是正整数；两者在服务构造与服务热替换时都会校验，不合法直接抛错。
 
 ## 设置页与 profile 的关系
 
 **设置页**（设置 → Worktree）改的就是上面「配置」里的那几个策略字段。它与 profile 的关系是：
+
+`fileGuard` 默认开，所以默认形态就通过 `ctx.inject(['tools'], …)` 注册了 `worktree_backup`——这是插件唯一的模型工具；关掉它就没有工具。`denyDestructiveCommands` 的开关只在守卫打开时有意义。
 
 - 保存写进 **profile 的 `cordis.patch.yml`**（UI 和你手改 YAML 改的是同一处），所以优先级、备份、版本管理都和你手工编辑完全一样；
 - 这几个字段在插件里声明为 **volatile**，Host 会在文档更新后立刻把新策略装回正在运行的服务实例上——**不需要重启**；改名、路由开关这类"影响注册"的字段不在这里，它们只在启动时生效；
@@ -258,7 +292,7 @@ Worktree 行消失时，浏览器看不到"目录是被删了还是被保留了"
 node_modules/.bin/vitest run --root dsh-worktree
 ```
 
-用例覆盖：porcelain 两种分隔格式与 prunable/locked 元数据、分支列表解析、仓库根回溯（linked worktree / submodule 区分）、分支与路径校验、三种存储布局（工作区内 / 仓库同级 / 用户目录）与 `agentsDirectory` 校验、真实 git 上的创建/列举/删除/脏目录/主 checkout 拒绝/从 linked worktree 内再创建/按指定 base 分支新建、**linked checkout 探测（linked / 主 worktree / checkout 内部目录三种答案）**、**子模块与独立嵌套仓库的创建与删除（开关默认关、含扫描深度、跳过一个建不了分支的嵌套仓库并把它记进 `nestedSkipped`、带子模块 checkout 的拒绝语义、原 checkout 子模块状态不受影响）**、**归档清理（删 checkout 与工作区记录、未归档不动、非 linked 不动、脏目录保留、子代理归档不误删父工作区）与归档结果记录（removed / kept + 原因 / unknown、同路径后一次覆盖前一次的真实原因）**、**第二条通知的判定（基線不报、已归档的行消失才探测、removed/kept 各出一条、unknown 静默、未归档不探测、dispose 后丢弃迟到答案）**、**服务策略热替换**、**设置页的注册门控/字段投影/保存与清理**、路由的原子性与回滚、`branches` 方法、浏览器侧分支规则与路由客户端、座位的基础分支与分支列表、控件"先拉会话目录、再导航"的次序（含导航被拒后的报错）、**草稿迁移（多行文字 + 引用芯片 + 附件一起搬、创建期间继续输入取最新一版、导航被拒时两侧都回滚且原草稿保留后重试只建一次、目标已有草稿就拒绝、Host 拒绝创建时不动草稿、创建期间切走会话就不再搬别人的草稿）**。
+用例覆盖：porcelain 两种分隔格式与 prunable/locked 元数据、分支列表解析、仓库根回溯（linked worktree / submodule 区分）、分支与路径校验、三种存储布局（工作区内 / 仓库同级 / 用户目录）与 `agentsDirectory` 校验、真实 git 上的创建/列举/删除/脏目录/主 checkout 拒绝/从 linked worktree 内再创建/按指定 base 分支新建、**linked checkout 探测（linked / 主 worktree / checkout 内部目录三种答案）**、**子模块与独立嵌套仓库的创建与删除（开关默认关、含扫描深度、跳过一个建不了分支的嵌套仓库并把它记进 `nestedSkipped`、带子模块 checkout 的拒绝语义、原 checkout 子模块状态不受影响）**、**归档清理（删 checkout 与工作区记录、未归档不动、非 linked 不动、脏目录保留、子代理归档不误删父工作区、同一条通知同时删掉该会话的文件备份）与归档结果记录（removed / kept + 原因 / unknown、同路径后一次覆盖前一次的真实原因）**、**第二条通知的判定（基線不报、已归档的行消失才探测、removed/kept 各出一条、unknown 静默、未归档不探测、dispose 后丢弃迟到答案）**、**服务策略热替换**、**设置页的注册门控/字段投影/保存与清理**、**文件保护（首次复制且第二次不覆盖、相对路径解析、二进制逐字节相同、工作区外仍可保护、不存在的文件不保护、AI 新建的文件在本会话不保护而在新会话保护、目录不复制、删除命令被拒且点名工具、引号内不误伤、策略关闭时不拦、复制先于委派调用落盘、无文件参数不触发、按会话删除备份且不影响别的会话、重复删除返回 false、重新创建的同 id 会话会再复制一次、dispose 后不再监听）**、**设置页字段取值转换（缺省即 schema 默认而非 false、开关写布尔值、非法文本被拒、其它字段仍严格）**、路由的原子性与回滚、`branches` 方法、浏览器侧分支规则与路由客户端、座位的基础分支与分支列表、控件"先拉会话目录、再导航"的次序（含导航被拒后的报错）、**草稿迁移（多行文字 + 引用芯片 + 附件一起搬、创建期间继续输入取最新一版、导航被拒时两侧都回滚且原草稿保留后重试只建一次、目标已有草稿就拒绝、Host 拒绝创建时不动草稿、创建期间切走会话就不再搬别人的草稿）**。
 
 浏览器半边那四个 spec（`seat` / `registration` / `navigation` / `settings`）要 checkout 的 pnpm store 才能解析运行时依赖，走 `--config vitest.harness.config.ts` 的全量配置：
 
@@ -303,3 +337,6 @@ npm run typecheck
 6. `startSessionRoute: false` 却从界面勾选 → 路由没挂，客户端只会报 "the worktree route is unreachable"。
 7. 改 `src/policy.ts` 的取值集合后忘了同步设置页/浏览器半边 → 两侧对"哪些值合法"不再一致，Host 拒绝的值可能已经在页面上被暂存。
 8. hero 行距或那个 dock 的 order 被上游改动 → 胶囊不再与 `选择工作区 / 模式` 同一行（见「界面实现细节」）。
+9. 改 `policy.ts` 的 `DEFAULT_FILE_GUARD` / `DEFAULT_DENY_DESTRUCTIVE_COMMANDS` 却忘了同步 `src/client/settings-fields.ts` 的 `SWITCH_DEFAULT` → 设置页把"开"画成"关"（或反之），用户会去改一个本来就对的设置。两者必须一起改。
+10. 把 `defineTool` 从 `src/backup-tool.ts` 挪回 `src/file-guard.ts` → 守卫会因此在**导入期**拉进工具注册表及其服务依赖（`dsh-tools` → `dsh-scope` 等），自足 suite 立刻加载失败。拆成两个模块就是为了让守卫本身不依赖注册表。
+11. 改 `file-guard.ts` 的 `place()` 或 `archive()` 时忘了两边都用 `sessionKeyOf` → 写进一个键、删另一个键，归档后备份目录永远留着。

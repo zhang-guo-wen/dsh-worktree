@@ -124,6 +124,12 @@ export function WorktreeSettingsSection(props: WorktreeSettingsSectionProps) {
   const createsNested = state.nestedRepositories.text !== 'none'
   if (!state.available) return <p className={css.notice} role="status">{labels.unavailable}</p>
 
+  // The same rule as the scan depth: a switch that cannot mean anything yet
+  // says so where it sits rather than going inert without explanation. The
+  // store renders an absent value as the schema default, so only an explicit
+  // `false` means off here.
+  const guardsFiles = state.fileGuard.text !== 'false'
+
   return (
     <div className={css.page}>
       <h2 className={css.pageTitle}>{t('settings.title')}</h2>
@@ -171,6 +177,32 @@ export function WorktreeSettingsSection(props: WorktreeSettingsSectionProps) {
             value={state.nestedScanDepth.text}
             disabled={readOnly || !createsNested}
             onChange={(event) => { props.edit('nestedScanDepth', event.target.value) }}
+          />
+        )}
+      />
+      <Row
+        id="worktree-file-guard"
+        title={t('settings.guard.label')}
+        description={t('settings.guard.hint')}
+        control={(
+          <Switch
+            checked={guardsFiles}
+            label={t('settings.guard.label')}
+            disabled={readOnly}
+            onChange={(next) => { props.edit('fileGuard', String(next)) }}
+          />
+        )}
+      />
+      <Row
+        id="worktree-deny-destructive"
+        title={t('settings.deny.label')}
+        description={guardsFiles ? t('settings.deny.hint') : t('settings.deny.inactive')}
+        control={(
+          <Switch
+            checked={state.denyDestructiveCommands.text !== 'false'}
+            label={t('settings.deny.label')}
+            disabled={readOnly || !guardsFiles}
+            onChange={(next) => { props.edit('denyDestructiveCommands', String(next)) }}
           />
         )}
       />

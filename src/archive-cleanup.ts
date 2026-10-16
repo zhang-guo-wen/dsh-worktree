@@ -31,6 +31,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type { WorktreeService } from './service.ts'
+import type { FileGuard } from './file-guard.ts'
 
 /**
  * What the archive flow did to one checkout, kept for the browser half.
@@ -109,8 +110,9 @@ interface SessionsLike {
  * notification and nothing else — no checkout is touched by disposal.
  * @param ctx - the Host plugin context.
  * @param service - the worktree capability doing the removal.
+ * @param guard - the file guard whose per-session backups end with the session.
  */
-export function installArchiveCleanup(ctx: Context, service: WorktreeService): void {
+export function installArchiveCleanup(ctx: Context, service: WorktreeService, guard?: FileGuard): void {
   let pending = Promise.resolve()
   /** Serialize sweeps: two archives landing together must not race on one registry. */
   const serialize = (work: () => Promise<void>): void => {
@@ -125,6 +127,10 @@ export function installArchiveCleanup(ctx: Context, service: WorktreeService): v
         // Read the archived set after the notification returns, so removal sees
         // the set the archive just made durable.
         serialize(() => reconcile(scope, service, registry, [sessionId]))
+        // Backups belong to the session that asked for them, so the archive is
+        // where they end. This runs whether or not a checkout was removed: the
+        // guard protects any session's files, and most sessions have no checkout.
+        serialize(async () => { await guard?.archive(String(sessionId)) })
       }),
       'dsh-worktree: remove the checkout of an archived session',
     )

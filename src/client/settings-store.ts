@@ -9,13 +9,17 @@ import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client
 import type {
   SettingsFieldState, SettingsFormScope, SettingsFormShell, SettingsFormPathOp,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { NESTED_REPOSITORY_POLICIES, WORKTREE_LAYOUTS } from '../policy.ts'
+import {
+  formatSetting, parseSetting, WORKTREE_SETTINGS_FIELDS, type WorktreeSettingsField,
+} from './settings-fields.ts'
 
 /** The live policy fields exposed by this page. */
 export interface WorktreeSettings {
   nestedRepositories?: string
   defaultPath?: string
   nestedScanDepth?: number
+  fileGuard?: boolean
+  denyDestructiveCommands?: boolean
 }
 
 /** What the worktree settings page renders. */
@@ -23,6 +27,8 @@ export interface WorktreeSettingsState extends SettingsFormShell {
   nestedRepositories: SettingsFieldState
   defaultPath: SettingsFieldState
   nestedScanDepth: SettingsFieldState
+  fileGuard: SettingsFieldState
+  denyDestructiveCommands: SettingsFieldState
 }
 
 /** Only edits are exposed: this page has no manual save or reset workflow. */
@@ -31,15 +37,7 @@ export interface WorktreeSettingsFace {
   edit: (field: string, text: string) => void
 }
 
-const fields = ['nestedRepositories', 'defaultPath', 'nestedScanDepth'] as const
-type Field = typeof fields[number]
-
-function parse(field: Field, text: string): string | number | undefined {
-  if (field === 'nestedRepositories') return NESTED_REPOSITORY_POLICIES.includes(text as never) ? text : undefined
-  if (field === 'defaultPath') return WORKTREE_LAYOUTS.includes(text as never) ? text : undefined
-  const number = Number(text)
-  return text.trim() !== '' && Number.isSafeInteger(number) && number > 0 ? number : undefined
-}
+type Field = WorktreeSettingsField
 
 /** Bridges automatic, revision-fenced writes onto the Host's live policy. */
 export class WorktreeSettingsController {
@@ -56,14 +54,19 @@ export class WorktreeSettingsController {
     this.unsubscribe = scope.subscribe(() => { this.publish() })
   }
 
+  /**
+   * One field as its control renders it.
+   * @param field - the field being read.
+   * @returns the control's staged state.
+   */
   private field(field: Field): SettingsFieldState {
     const snapshot = this.scope.getSnapshot()
     const draft = this.drafts.get(field)
     const value = snapshot.value?.[field]
     return {
-      text: draft ?? (value === undefined ? '' : String(value)),
+      text: draft !== undefined ? draft : formatSetting(field, value),
       overridden: draft !== undefined || Object.hasOwn(snapshot.user ?? {}, field),
-      invalid: draft !== undefined && parse(field, draft) === undefined,
+      invalid: draft !== undefined && parseSetting(field, draft) === undefined,
     }
   }
 
@@ -73,12 +76,14 @@ export class WorktreeSettingsController {
       available: snapshot.status === 'ready',
       writable: snapshot.writable,
       dirty: this.drafts.size > 0,
-      invalid: [...this.drafts].some(([field, text]) => parse(field, text) === undefined),
+      invalid: [...this.drafts].some(([field, text]) => parseSetting(field, text) === undefined),
       saving: this.saving,
       failed: this.failedFields.size > 0,
       nestedRepositories: this.field('nestedRepositories'),
       defaultPath: this.field('defaultPath'),
       nestedScanDepth: this.field('nestedScanDepth'),
+      fileGuard: this.field('fileGuard'),
+      denyDestructiveCommands: this.field('denyDestructiveCommands'),
     }
   }
 
@@ -90,13 +95,15 @@ export class WorktreeSettingsController {
   }
 
   private edit(name: string, text: string): void {
-    if (!fields.includes(name as Field)) throw new Error(`unknown worktree setting ${name}`)
+    if (!WORKTREE_SETTINGS_FIELDS.includes(name as WorktreeSettingsField)) {
+      throw new Error(`unknown worktree setting ${name}`)
+    }
     const snapshot = this.scope.getSnapshot()
     if (this.disposed || snapshot.status !== 'ready' || !snapshot.writable) return
     const field = name as Field
     if (!this.saving && !this.drafts.has(field) && this.field(field).text === text) return
     this.drafts.set(field, text)
-    if (parse(field, text) === undefined) this.pending.delete(field)
+    if (parseSetting(field, text) === undefined) this.pending.delete(field)
     else this.pending.set(field, text)
     this.publish()
     void this.flush()
@@ -112,7 +119,7 @@ export class WorktreeSettingsController {
         const batch = new Map(this.pending)
         this.pending.clear()
         const ops: SettingsFormPathOp[] = [...batch].map(([field, text]) => ({
-          op: 'set', path: [field], value: parse(field, text),
+          op: 'set', path: [field], value: parseSetting(field, text),
         }))
         this.publish()
         let accepted = false

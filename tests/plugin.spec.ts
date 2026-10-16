@@ -2,10 +2,10 @@
  * Registration contract of the plugin entry.
  *
  * These specs mount the real plugin on a context carrying the services it
- * declares and assert what it published: the `worktree` service, the browser
- * route, and — because the plugin deliberately registers no model-facing tools
- * — that a tool registry it is handed stays untouched. They are the regression
- * guard for the loader-facing surface, which no behavior spec reaches.
+ * consumes and assert what it published: the `worktree` service, the browser
+ * route, and the one model-facing tool the file guard registers while it is on.
+ * They are the regression guard for the loader-facing surface, which no
+ * behavior spec reaches.
  */
 
 import { Context } from '@deepseek-ai/cordis'
@@ -82,18 +82,19 @@ describe('dsh-worktree plugin entry', () => {
     expect(ctx.get('worktree')).toBeDefined()
   })
 
-  it('registers no model-facing tools', async () => {
+  it('registers the file guard tool by default and nothing else', async () => {
     // Creating and removing a checkout are user actions; the model gets no tool
-    // for either. Archiving a session is the one automatic removal path.
+    // for either. The file guard is on by default, and declaring the files it
+    // protects is the one thing the model is asked to do.
     const { tools } = await mount()
-    expect(tools).toEqual([])
+    expect(tools).toEqual(['worktree_backup'])
   })
 
-  it('leaves a tool registry alone even when one is present', async () => {
+  it('leaves a tool registry alone while the file guard is off', async () => {
     const tools: string[] = []
     const ctx = new Context()
     await provideSibling(ctx, { tools: toolRegistry(tools) })
-    await ctx.plugin(plugin, {}).await()
+    await ctx.plugin(plugin, { fileGuard: false }).await()
     expect(tools).toEqual([])
   })
 
