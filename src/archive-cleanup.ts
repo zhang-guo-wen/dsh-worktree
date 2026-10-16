@@ -8,6 +8,18 @@
  * durable, which is exactly when a checkout may be removed without resurrecting
  * anything.
  *
+ * That notification is necessary but not sufficient. The registry dispatches it
+ * only when the archive is asked to stop running work
+ * (`archiveSession(id, { stopActivity: true })`, the "stop and archive" flow);
+ * the ordinary archive of an idle session — the sidebar's own action, and the
+ * common case — writes the durable archive set and notifies nobody. Waiting for
+ * an event that path never sends is what left an archived session's checkout and
+ * backups on disk. The archive set itself is the durable record, so this module
+ * also reconciles against it on a timer: every sweep ends the backups of any
+ * session that appeared in the set since the previous one, and removes the
+ * checkout that archive ended. One interval bounds how long a deleted session's
+ * files can outlive it.
+ *
  * Three constraints shape the rest of this module.
  *
  * 1. **A dirty checkout is never removed.** The service applies its own
@@ -84,6 +96,27 @@ export interface ArchiveCleanupOptions {
   readonly sessionId: SessionId
 }
 
+/**
+ * How often the durable archive set is re-read for archives nothing reported.
+ *
+ * One interval bounds how long a deleted session's backups and checkout can
+ * outlive it. The read is the registry's in-memory set, and a sweep that finds
+ * nothing new does no I/O at all, so the cost is a comparison per interval.
+ */
+const ARCHIVE_SWEEP_INTERVAL_MS = 30_000
+
+/** Deployment choices this module's wiring takes. */
+export interface ArchiveCleanupWiring {
+  /**
+   * Whether an archived session's linked checkout is removed. Off leaves every
+   * checkout in place — backups still end with their session, because the two
+   * are separate promises.
+   */
+  readonly removeCheckouts?: boolean
+  /** Interval between archive sweeps, in milliseconds. */
+  readonly sweepIntervalMs?: number
+}
+
 /** The narrow view of the workspace registry this module needs. */
 interface WorkspaceRegistryLike {
   readonly archivedSessionIds: readonly SessionId[]
@@ -104,15 +137,24 @@ interface SessionsLike {
 }
 
 /**
- * Wire post-archive checkout removal into one Host context.
+ * Wire post-archive cleanup into one Host context.
  *
  * Registration rides the plugin's fiber: unloading the plugin removes the
- * notification and nothing else — no checkout is touched by disposal.
+ * notification, the sweep, and nothing else — no checkout is touched by
+ * disposal.
  * @param ctx - the Host plugin context.
  * @param service - the worktree capability doing the removal.
  * @param guard - the file guard whose per-session backups end with the session.
+ * @param wiring - whether checkouts are removed and how often the archive set is re-read.
  */
-export function installArchiveCleanup(ctx: Context, service: WorktreeService, guard?: FileGuard): void {
+export function installArchiveCleanup(
+  ctx: Context,
+  service: WorktreeService,
+  guard?: FileGuard,
+  wiring: ArchiveCleanupWiring = {},
+): void {
+  const removeCheckouts = wiring.removeCheckouts ?? true
+  const sweepIntervalMs = wiring.sweepIntervalMs ?? ARCHIVE_SWEEP_INTERVAL_MS
   let pending = Promise.resolve()
   /** Serialize sweeps: two archives landing together must not race on one registry. */
   const serialize = (work: () => Promise<void>): void => {
@@ -122,11 +164,51 @@ export function installArchiveCleanup(ctx: Context, service: WorktreeService, gu
   }
   ctx.inject(['workspaceRegistry'], (scope: Context) => {
     const registry = scope.workspaceRegistry as unknown as WorkspaceRegistryLike
+    /**
+     * The archive set as it stood when this process started.
+     *
+     * Captured synchronously, before any sweep can run: a sweep that read the
+     * set later would silently promote an archive that arrived in between to
+     * "already archived when we started", and skip its checkout forever.
+     */
+    const inherited = new Set<string>(registry.archivedSessionIds.map(String))
+    /** Sessions this process already cleaned up for. */
+    const handled = new Set<string>()
+    /**
+     * Act on every archived session this process has not acted on yet.
+     *
+     * Backups end with the session that took them, so every session in the set
+     * loses them. A checkout is removed only for an archive that arrived while
+     * this process ran: the set it inherited predates it, and a checkout is
+     * ended by the archive that ended its session, not by a later host noticing
+     * an old record.
+     */
+    const sweep = async (): Promise<void> => {
+      const archived = new Set(registry.archivedSessionIds.map(String))
+      // An id that left the set — unarchived — may be archived again, and that
+      // archive is a new reason to clean up, so the first one must not suppress it.
+      for (const id of handled) if (!archived.has(id)) handled.delete(id)
+      const arrived = [...archived].filter(id => !handled.has(id))
+      if (arrived.length === 0) return
+      for (const id of arrived) handled.add(id)
+      for (const id of arrived) await guard?.archive(id)
+      const ended = arrived.filter(id => !inherited.has(id))
+      if (ended.length > 0) await reconcile(scope, service, registry, ended as SessionId[])
+    }
+    // The set this process inherited may hold archives whose cleanup never ran —
+    // a host that was down, or the idle archive no notification reported.
+    serialize(sweep)
+    scope.effect(() => {
+      const timer = setInterval(() => { serialize(sweep) }, sweepIntervalMs)
+      // A sweep must never be the reason a process stays alive.
+      timer.unref?.()
+      return () => { clearInterval(timer) }
+    }, 'dsh-worktree: clean up sessions archived without a notification')
     scope.effect(
       () => scope.on('workspace/session-stop', ({ sessionId }: ArchiveCleanupOptions) => {
         // Read the archived set after the notification returns, so removal sees
         // the set the archive just made durable.
-        serialize(() => reconcile(scope, service, registry, [sessionId]))
+        if (removeCheckouts) serialize(() => reconcile(scope, service, registry, [sessionId]))
         // Backups belong to the session that asked for them, so the archive is
         // where they end. This runs whether or not a checkout was removed: the
         // guard protects any session's files, and most sessions have no checkout.

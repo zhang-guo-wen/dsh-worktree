@@ -10,9 +10,22 @@ paths:
 
 ## 归档清理（`src/archive-cleanup.ts`）
 
-**harness 没有"会话已归档"事件。** Workspace registry 只提供两处：`workspace/session-activity`（归档**准入**的 waterfall）与 `workspace/session-stop`（归档**落盘之后**发给各 provider 的通知，见 `packages/workspace/workspace/src/index.ts` 的 `archiveSession`）。后者正是本插件要的时机，但 `archiveSession` 只在 `stopActivity: true` 时才 dispatch 它。
+**harness 没有"会话已归档"事件。** Workspace registry 只提供两处：`workspace/session-activity`（归档**准入**的 waterfall）与 `workspace/session-stop`（归档**落盘之后**发给各 provider 的通知，见 `packages/workspace/workspace/src/index.ts` 的 `archiveSession`）。后者时机正确，但 `archiveSession` **只在 `stopActivity: true` 时才 dispatch 它**。
 
-触发流程：界面先以 `stopActivity` 缺省值归档 → 会话有活动时 registry 抛 `workspace/session-active`，弹「停止并归档」→ 用户确认后 `stopActivity: true` → 归档落盘 → `workspace/session-stop` → 本模块删 checkout。空闲会话（无活动、无需确认）走缺省归档路径，**不会有这个通知**：该 checkout 留到下一次归档触发时被顺带清掉（`reconcile` 只处理被通知到的那批 session id），或由用户按旧方式手动删除。
+界面两条归档路径因此行为不同：会话有活动时先归档失败 → 弹「停止并归档」→ `stopActivity: true` → 落盘 → `workspace/session-stop` → 本模块收到通知；**空闲会话（无活动、无需确认，也就是侧边栏直接归档的常见路径）走缺省归档，只写归档集合，谁都不通知**。
+
+所以触发有两条腿，**缺一不可**：
+
+| 触发 | 机制 | 覆盖 |
+|---|---|---|
+| `workspace/session-stop` | 通知到达即处理该 session id | 「停止并归档」，立即（不等一个周期） |
+| **周期对账（sweep）** | 每 `ARCHIVE_SWEEP_INTERVAL_MS`（30 s）重读 `workspaceRegistry.archivedSessionIds`，处理本进程还没处理过的 id；启动时也跑一次 | 空闲归档、宿主停机期间发生的归档、上一次清理失败留下的残留 |
+
+sweep 的两条判据：
+
+- **备份按集合走**：集合里的每个新 id 都 `guard.archive(id)`——备份属于发起它的会话，归档即结束，无论有没有通知。
+- **checkout 只认"本进程运行期间新到的"归档**：激活时先把集合**同步快照**成 `inherited`（必须在任何异步之前取，否则启动后才归档的会话会被误判成"启动前就有"，永远不再删它的 checkout），sweep 只对 `arrived - inherited` 调 `reconcile`。历史归档不追删 checkout：checkout 应当由"结束该会话的那次归档"删除，而不是被后来启动的宿主翻旧账。
+- 集合里被移除的 id（取消归档）会从 `handled` 里忘掉，再归档时重新视为新归档。
 
 一次 reconcile 的判定链（`reconcile` → `discard`）：
 
@@ -23,4 +36,6 @@ paths:
 5. `service.remove({ cwd: repositoryRoot, path })`：脏 checkout 由服务自己的 `assertRemovable` 拒绝，本模块**不传 force**——拒绝原因写进日志，checkout 原样保留。
 6. 成功后 `workspaceRegistry.delete(workspace.id)` 摘掉工作区记录。
 
-三条不变量：**不拦截归档**（只订阅通知，失败全部降级为日志）；**不丢工作**（脏目录一律保留）；**并发串行**（多个归档同时到达时由模块内的 promise 链排队）。
+三条不变量：**不拦截归档**（只订阅通知与读集合，失败全部降级为日志）；**不丢工作**（脏目录一律保留）；**并发串行**（通知与 sweep 共用同一条 promise 链；`setInterval` 用 `unref()`，绝不让 sweep 拖住进程退出）。
+
+`removeOnSessionArchive` 只决定 **checkout** 删不删；备份的归档清理永远安装（`installArchiveCleanup` 无条件调用）。同理 `fileGuard` 关掉时仍会构造一个 guard 对象供清理使用——只是不再注册保护与工具。

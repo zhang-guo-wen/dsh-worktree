@@ -1,11 +1,15 @@
 /**
  * Post-archive checkout removal.
  *
- * The trigger is the Workspace registry's `workspace/session-stop`
- * notification, which the registry dispatches after an archive set is durable.
- * These specs drive that event against a stubbed worktree service so the
- * removal contract is asserted without a repository: which checkouts go, which
- * are kept, and what happens when the removal itself is refused.
+ * There are two triggers, because the registry reports only one of them. The
+ * `workspace/session-stop` notification arrives when an archive stops running
+ * work; an archive of an idle session — the sidebar's own action — writes the
+ * durable set and notifies nobody, so the durable set is re-read on an interval
+ * and every session that appeared in it since the previous sweep is cleaned up.
+ *
+ * These specs drive both against a stubbed worktree service so the removal
+ * contract is asserted without a repository: which checkouts go, which are kept,
+ * and what happens when the removal itself is refused.
  */
 
 import { Context } from '@deepseek-ai/cordis'
@@ -49,6 +53,7 @@ async function mount(options: {
   inspect?: WorktreeService['inspectLinkedCheckout']
   remove?: WorktreeService['remove']
   guard?: FileGuard
+  sweepIntervalMs?: number
 }) {
   const state = registry(options.workspaces, options.archived)
   const removed: Array<{ cwd: string; path: string }> = []
@@ -69,8 +74,34 @@ async function mount(options: {
       })
     },
   }).await()
-  installArchiveCleanup(ctx, service, options.guard)
+  installArchiveCleanup(ctx, service, options.guard, { sweepIntervalMs: options.sweepIntervalMs })
   return { ctx, state, removed }
+}
+
+/**
+ * The session directories one guard root holds.
+ * @param root - the guard root.
+ * @returns the directory names, which are the session keys.
+ */
+async function backupDirectories(root: string): Promise<string[]> {
+  const entries = await readdir(root, { withFileTypes: true })
+  return entries.filter(entry => entry.isDirectory()).map(entry => entry.name)
+}
+
+/**
+ * Protect one file for one session so a backup directory exists.
+ * @param root - the guard root.
+ * @param session - the session id owning the copy.
+ * @returns the guard that took the copy.
+ */
+async function protectedFile(root: string, session: string): Promise<FileGuard> {
+  const workspace = join(root, 'workspace')
+  await mkdir(workspace, { recursive: true })
+  const file = join(workspace, 'notes.txt')
+  await writeFile(file, 'before')
+  const guard = new FileGuard({ directory: join(root, 'guard'), denyDestructiveCommands: true })
+  await guard.protect({ session: { id: session, header: { cwd: workspace } } }, file)
+  return guard
 }
 
 describe('post-archive checkout removal', () => {
@@ -235,7 +266,8 @@ describe('archive outcome record', () => {
     expect((await readdir(join(root, 'guard'), { withFileTypes: true })).filter(entry => entry.isDirectory())).toHaveLength(1)
 
     // The same notification that removes a checkout also ends the session's
-    // backups, so the guard is wired the same way.
+    // backups, so the guard is wired the same way — and a sweep would end them
+    // anyway, because the archive set already names this session.
     const { ctx, state } = await mount({
       workspaces: [{ id: 'w1', path: workspace, sessionIds: ['s1'] }],
       archived: ['s1'],
@@ -248,5 +280,82 @@ describe('archive outcome record', () => {
     expect((await readdir(join(root, 'guard'), { withFileTypes: true })).filter(entry => entry.isDirectory())).toHaveLength(0)
 
     await rm(root, { recursive: true, force: true })
+  })
+})
+
+/**
+ * The archives nothing reported.
+ *
+ * `workspace/session-stop` reaches this module only when an archive stops
+ * running work. An idle session's archive — the sidebar's own action — has to be
+ * found by comparing the durable archive set with what this process already
+ * cleaned up, which is what the sweep does.
+ */
+describe('sessions archived without a notification', () => {
+  it('ends the backups of a session archived before this host started', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-archive-sweep-'))
+    try {
+      const guard = await protectedFile(root, 's1')
+      expect(await backupDirectories(join(root, 'guard'))).toHaveLength(1)
+
+      // Nothing announces this archive: the set is the only evidence, and the
+      // checkout that archive once ran in is not this process's to remove.
+      const { removed } = await mount({
+        workspaces: [{ id: 'w1', path: 'C:/repo-wt', sessionIds: ['s1'] }],
+        archived: ['s1'],
+        sessions: { s1: { header: { cwd: 'C:/repo-wt' } } },
+        guard,
+      })
+
+      await vi.waitFor(async () => expect(await backupDirectories(join(root, 'guard'))).toEqual([]))
+      expect(removed).toEqual([])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('ends the backups and the checkout of a session archived while this host runs', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-archive-sweep-'))
+    try {
+      const guard = await protectedFile(root, 's1')
+      const { state, removed } = await mount({
+        workspaces: [{ id: 'w1', path: 'C:/repo-wt', sessionIds: ['s1'] }],
+        archived: [],
+        sessions: { s1: { header: { cwd: 'C:/repo-wt' } } },
+        guard,
+        sweepIntervalMs: 5,
+      })
+
+      state.archivedSessionIds.push('s1')
+
+      await vi.waitFor(async () => expect(await backupDirectories(join(root, 'guard'))).toEqual([]))
+      await vi.waitFor(() => expect(removed).toHaveLength(1))
+      await vi.waitFor(() => expect(state.deleted).toEqual(['w1']))
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves a session that was never archived alone', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-archive-sweep-'))
+    try {
+      const guard = await protectedFile(root, 's1')
+      const { removed } = await mount({
+        workspaces: [{ id: 'w1', path: 'C:/repo-wt', sessionIds: ['s1'] }],
+        archived: [],
+        sessions: { s1: { header: { cwd: 'C:/repo-wt' } } },
+        guard,
+        sweepIntervalMs: 5,
+      })
+
+      // Several intervals pass with nothing archived: a sweep must not treat a
+      // live session's copy as garbage.
+      await new Promise(resolve => { setTimeout(resolve, 40) })
+
+      expect(await backupDirectories(join(root, 'guard'))).toHaveLength(1)
+      expect(removed).toEqual([])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })

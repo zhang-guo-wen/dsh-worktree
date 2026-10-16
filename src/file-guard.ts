@@ -257,6 +257,9 @@ export class FileGuard {
     if (this.archived.has(key)) return false
     this.archived.add(key)
     const directory = join(this.directory, key)
+    // Asked before the removal because a sweep calls this for every archived
+    // session, and the log line is only worth printing when something was there.
+    const present = await pathExists(directory)
     try {
       await rm(directory, { recursive: true, force: true })
     } catch (error: unknown) {
@@ -266,6 +269,7 @@ export class FileGuard {
       void error
       return false
     }
+    if (present) console.log(`dsh-worktree: removed the backups of archived session ${session}`)
     return true
   }
 
@@ -484,4 +488,19 @@ function sessionKeyOf(session: string): string {
 function isMissing(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | undefined)?.code
   return code === 'ENOENT' || code === 'ENOTDIR'
+}
+
+/**
+ * Whether one path exists, file or directory.
+ * @param path - the absolute path to look for.
+ * @returns true when it is there.
+ */
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path)
+    return true
+  } catch (error: unknown) {
+    if (isMissing(error)) return false
+    throw error
+  }
 }

@@ -36,7 +36,7 @@ import {
 import { WorktreeService, type WorktreeServiceOptions } from './service.ts'
 import { installArchiveCleanup } from './archive-cleanup.ts'
 import { defineBackupTool } from './backup-tool.ts'
-import { installFileGuard } from './file-guard.ts'
+import { FileGuard, installFileGuard } from './file-guard.ts'
 import { registerRoute } from './route.ts'
 // Pulls the `ctx.worktree` service declaration into this program's type face.
 import type {} from './types.ts'
@@ -199,11 +199,13 @@ export function apply(ctx: Context, config: Config): void {
       service.reconfigure(liveOptions(config))
     }), 'dsh-worktree: live policy')
   })
-  // The guard is built first: the archive cleanup needs it to delete a session's
-  // backups, and cleanup is installed even when the guard is off so a session
-  // protected before the switch was turned off still gets its directory removed.
-  const guard = config.fileGuard.get() ? installFileGuard(ctx, guardOptions(config)) : undefined
-  if (guard !== undefined) {
+  // The guard object is built first and always: the archive cleanup needs it to
+  // end a session's backups, and that promise outlives the protection switch —
+  // a session that copied files while the switch was on still has to be cleaned
+  // up after it is turned off. Only the protection itself is conditional.
+  const protection = config.fileGuard.get()
+  const guard = protection ? installFileGuard(ctx, guardOptions(config)) : new FileGuard(guardOptions(config))
+  if (protection) {
     // The one model-facing tool. The registry is asked for through `ctx.inject`
     // like every other consumed service: activation order is not guaranteed, and
     // a deployment without a tool registry keeps the guard's own protection
@@ -212,6 +214,9 @@ export function apply(ctx: Context, config: Config): void {
       scope.effect(() => scope.tools.register(defineBackupTool(guard)), 'dsh-worktree: declare files to protect')
     })
   }
-  if (config.removeOnSessionArchive ?? true) installArchiveCleanup(ctx, service, guard)
+  // Cleanup is installed unconditionally: `removeOnSessionArchive` decides only
+  // whether an archived session's checkout goes, never whether its backups end
+  // with it.
+  installArchiveCleanup(ctx, service, guard, { removeCheckouts: config.removeOnSessionArchive ?? true })
   if (config.startSessionRoute ?? true) registerRoute(ctx, service)
 }
