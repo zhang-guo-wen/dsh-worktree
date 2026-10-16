@@ -3,6 +3,9 @@ import { transform } from 'lightningcss'
 import { describe, expect, it } from 'vitest'
 
 const source = readFileSync(new URL('../src/client/WorktreeChip.module.css', import.meta.url), 'utf8')
+const settings = readFileSync(new URL('../src/client/SettingsSection.tsx', import.meta.url), 'utf8')
+const settingsCss = readFileSync(new URL('../src/client/SettingsSection.module.css', import.meta.url), 'utf8')
+const locales = readFileSync(new URL('../src/client/locales.ts', import.meta.url), 'utf8')
 const mobile = source.slice(source.indexOf('@media (max-width: 600px)'))
 const declarations = (selector: string) => {
   const start = mobile.indexOf(selector)
@@ -13,12 +16,55 @@ const declarations = (selector: string) => {
 
 describe('worktree settings automatic-save surface', () => {
   it('has no manual-save/reset footer and never discards edits on page exit', () => {
-    const component = readFileSync(new URL('../src/client/SettingsSection.tsx', import.meta.url), 'utf8')
-    expect(component).not.toMatch(/props\.(save|resetField|discard)|css\.(footer|save|resetAll)/)
-    expect(component).toContain("props.edit('nestedRepositories'")
-    expect(component).toContain("props.edit('nestedScanDepth'")
-    expect(component).toContain("props.edit('defaultPath'")
-    expect(component).toContain("t('settings.invalidNumber')")
+    expect(settings).not.toMatch(/props\.(save|resetField|discard)|css\.(footer|save|resetAll)/)
+    expect(settings).toContain("props.edit('nestedRepositories'")
+    expect(settings).toContain("props.edit('nestedScanDepth'")
+    expect(settings).toContain("props.edit('defaultPath'")
+    expect(settings).toContain("t('settings.invalidNumber')")
+  })
+})
+
+describe('file backup settings page', () => {
+  it('groups the rows into a worktree card above a backup card', () => {
+    const worktree = settings.indexOf("title={t('settings.worktree.cardTitle')}")
+    const backup = settings.indexOf("title={t('settings.backup.cardTitle')}")
+    expect(worktree).toBeGreaterThanOrEqual(0)
+    expect(backup).toBeGreaterThan(worktree)
+    // Every row sits inside one of the two cards, and the rows of each card are
+    // exactly the ones the split names.
+    expect(settings.slice(worktree, backup)).toContain("props.edit('nestedRepositories'")
+    expect(settings.slice(worktree, backup)).toContain("props.edit('nestedScanDepth'")
+    expect(settings.slice(worktree, backup)).toContain("props.edit('defaultPath'")
+    expect(settings.slice(backup)).toContain("props.edit('fileGuard'")
+    expect(settings.slice(backup)).toContain("props.edit('denyDestructiveCommands'")
+  })
+
+  it('names the navigation entry and the page after the file backup it owns', () => {
+    expect(locales).toContain("'settings.nav': '文件备份'")
+    expect(locales).toContain("'settings.title': '文件备份'")
+    expect(settings).toContain("t('settings.title')")
+  })
+
+  it('draws the cards on the settings card material, not an elevation shadow', () => {
+    const card = settingsCss.slice(settingsCss.indexOf('.card {'), settingsCss.indexOf('.cardTitle'))
+    expect(card).toMatch(/border-radius:\s*var\(--dsw-radius-xl\)/)
+    expect(card).toMatch(/border:\s*0\.5px solid var\(--dsw-alias-settings-card-stroke\)/)
+    expect(card).toMatch(/background:\s*var\(--dsw-alias-settings-card-fill\)/)
+    expect(card).not.toMatch(/box-shadow/)
+    // The closing stroke is the card's, so the last row does not draw a second.
+    expect(settingsCss).toMatch(/\.card > \.row:last-child\s*\{[^}]*border-bottom:\s*0/)
+  })
+
+  it('ships the page the browser loads, not the previous one', () => {
+    // The shipped bundle is what a git install runs, so the new names must
+    // reach it: a forgotten rebuild keeps serving the previous page. The pairs
+    // are asserted whole, because the words alone also appear in other copy.
+    const built = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+    for (const pair of ['"settings.nav": "文件备份"', '"settings.title": "文件备份"',
+      '"settings.worktree.cardTitle": "Worktree 设置"', '"settings.backup.cardTitle": "自动备份"',
+      '--dsw-alias-settings-card-fill']) {
+      expect(built).toContain(pair)
+    }
   })
 })
 

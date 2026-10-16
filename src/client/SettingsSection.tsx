@@ -1,11 +1,13 @@
 /**
- * The worktree settings page: the policy every later checkout is created under.
+ * The file backup settings page, in two cards: the policy every later checkout
+ * is created under, and the protection that runs over files inside a session.
  *
- * Three rows, each the settings column's own two-column shape (label and
- * explanation left, control right), so this page reads like every other page
- * beside it. The rows are the three choices that actually change what a
- * checkout looks like: whether the child repositories come along, how deep the
- * search for them goes, and where the directory lands. Everything else the
+ * Each card is a title, an explanation, and its own rows, laid out in the
+ * settings column's two-column shape (label and explanation left, control
+ * right), so this page reads like every other page beside it. The Worktree card
+ * answers what a checkout looks like — whether the child repositories come
+ * along, how deep the search for them goes, and where the directory lands. The
+ * backup card answers what happens to the files inside it. Everything else the
  * entry accepts — the agent subdirectory, the git bound, the route options — is
  * deployment composition, edited in the profile's own patch.
  *
@@ -44,6 +46,24 @@ function Row(props: { id: string; title: string; description: string; control: R
       </div>
       <div className={css.control}>{props.control}</div>
     </div>
+  )
+}
+
+/**
+ * Group rows under one heading, on the settings cards' shared material.
+ *
+ * The heading names the surface the rows below answer for. Its id is what the
+ * region points at, so a screen reader announces the group by the same words
+ * the page shows above it.
+ * @param props - the heading's identity and text, and the rows it groups.
+ * @returns the card.
+ */
+function Card(props: { id: string; title: string; children: ReactNode }) {
+  return (
+    <section className={css.card} aria-labelledby={`${props.id}-heading`}>
+      <h3 className={css.cardTitle} id={`${props.id}-heading`}>{props.title}</h3>
+      {props.children}
+    </section>
   )
 }
 
@@ -94,7 +114,7 @@ function ChoiceRow(props: {
 }
 
 /**
- * Render the worktree policy page.
+ * Render the file backup page.
  * @param props - the composition's other props, this plugin's copy, and the form face.
  * @returns the settings page.
  */
@@ -130,100 +150,110 @@ export function WorktreeSettingsSection(props: WorktreeSettingsSectionProps) {
   // `false` means off here.
   const guardsFiles = state.fileGuard.text !== 'false'
 
+  // The Git state belongs to the card that creates checkouts, so it sits at
+  // that card's head rather than above both: what it reports answers the first
+  // card's subject, not the page's.
+  const gitLine = gitStatus.kind === 'checking' ? t('settings.gitChecking')
+    : gitStatus.kind === 'available' ? `${t('settings.gitAvailable')} · ${gitStatus.detail}`
+      : gitStatus.kind === 'missing' ? t('settings.gitMissing')
+        : `${t('settings.gitFailed')}：${gitStatus.detail}`
+
   return (
     <div className={css.page}>
       <h2 className={css.pageTitle}>{t('settings.title')}</h2>
       <p className={css.pageDescription}>{t('settings.description')}</p>
-      <p className={`${css.gitStatus} ${gitStatus.kind === 'missing' || gitStatus.kind === 'failed' ? css.gitError : ''}`} role="status">
-        {gitStatus.kind === 'checking' ? t('settings.gitChecking')
-          : gitStatus.kind === 'available' ? `${t('settings.gitAvailable')} · ${gitStatus.detail}`
-            : gitStatus.kind === 'missing' ? t('settings.gitMissing')
-              : `${t('settings.gitFailed')}：${gitStatus.detail}`}
-      </p>
       {!state.writable ? <p className={css.notice} role="status">{labels.readOnly}</p> : null}
-      <Row
-        id="worktree-nested"
-        title={t('settings.nested.label')}
-        description={t('settings.nested.hint')}
-        control={(
-          <Switch
-            checked={createsNested}
-            label={t('settings.nested.label')}
-            disabled={readOnly}
-            // Layout class only: on a touch device the stylesheet grows this
-            // button's transparent hit area to 44px, because the primitive's
-            // 36x20 body is fixed and must stay as it is.
-            className={css.switchHit}
-            // The switch is the whole choice: on means submodules and nested
-            // repositories both come along, which is `all`; off means the
-            // parent alone. The middle policy stays reachable from the
-            // deployment's own patch.
-            onChange={(next) => { props.edit('nestedRepositories', next ? 'all' : 'none') }}
-          />
-        )}
-      />
-      <Row
-        id="worktree-scan-depth"
-        title={t('settings.depth.label')}
-        description={createsNested ? t('settings.depth.hint') : t('settings.depth.inactive')}
-        control={(
-          <input
-            type="text"
-            inputMode="numeric"
-            className={`${css.input} ${css.inputNumber}`}
-            aria-labelledby="worktree-scan-depth-label"
-            aria-describedby="worktree-scan-depth-message"
-            aria-invalid={state.nestedScanDepth.invalid || undefined}
-            value={state.nestedScanDepth.text}
-            disabled={readOnly || !createsNested}
-            onChange={(event) => { props.edit('nestedScanDepth', event.target.value) }}
-          />
-        )}
-      />
-      <Row
-        id="worktree-file-guard"
-        title={t('settings.guard.label')}
-        description={t('settings.guard.hint')}
-        control={(
-          <Switch
-            checked={guardsFiles}
-            label={t('settings.guard.label')}
-            disabled={readOnly}
-            onChange={(next) => { props.edit('fileGuard', String(next)) }}
-          />
-        )}
-      />
-      <Row
-        id="worktree-deny-destructive"
-        title={t('settings.deny.label')}
-        description={guardsFiles ? t('settings.deny.hint') : t('settings.deny.inactive')}
-        control={(
-          <Switch
-            checked={state.denyDestructiveCommands.text !== 'false'}
-            label={t('settings.deny.label')}
-            disabled={readOnly || !guardsFiles}
-            onChange={(next) => { props.edit('denyDestructiveCommands', String(next)) }}
-          />
-        )}
-      />
-      <Row
-        id="worktree-default-path"
-        title={t('settings.layout.label')}
-        // The explanation IS the chosen path: which directory a checkout lands
-        // in is the one thing this row decides, and the answer changes with the
-        // choice rather than repeating it.
-        description={t(layoutPathKey(state.defaultPath.text))}
-        control={(
-          <ChoiceRow
-            id="worktree-default-path"
-            label={t('settings.layout.label')}
-            text={state.defaultPath.text}
-            options={WORKTREE_LAYOUTS.map(value => ({ value, label: t(`option.${value}` as WorktreeCopyKey) }))}
-            disabled={readOnly}
-            onEdit={(value) => { props.edit('defaultPath', value) }}
-          />
-        )}
-      />
+      <Card id="worktree" title={t('settings.worktree.cardTitle')}>
+        <p className={`${css.gitStatus} ${gitStatus.kind === 'missing' || gitStatus.kind === 'failed' ? css.gitError : ''}`} role="status">
+          {gitLine}
+        </p>
+        <Row
+          id="worktree-nested"
+          title={t('settings.nested.label')}
+          description={t('settings.nested.hint')}
+          control={(
+            <Switch
+              checked={createsNested}
+              label={t('settings.nested.label')}
+              disabled={readOnly}
+              // Layout class only: on a touch device the stylesheet grows this
+              // button's transparent hit area to 44px, because the primitive's
+              // 36x20 body is fixed and must stay as it is.
+              className={css.switchHit}
+              // The switch is the whole choice: on means submodules and nested
+              // repositories both come along, which is `all`; off means the
+              // parent alone. The middle policy stays reachable from the
+              // deployment's own patch.
+              onChange={(next) => { props.edit('nestedRepositories', next ? 'all' : 'none') }}
+            />
+          )}
+        />
+        <Row
+          id="worktree-scan-depth"
+          title={t('settings.depth.label')}
+          description={createsNested ? t('settings.depth.hint') : t('settings.depth.inactive')}
+          control={(
+            <input
+              type="text"
+              inputMode="numeric"
+              className={`${css.input} ${css.inputNumber}`}
+              aria-labelledby="worktree-scan-depth-label"
+              aria-describedby="worktree-scan-depth-message"
+              aria-invalid={state.nestedScanDepth.invalid || undefined}
+              value={state.nestedScanDepth.text}
+              disabled={readOnly || !createsNested}
+              onChange={(event) => { props.edit('nestedScanDepth', event.target.value) }}
+            />
+          )}
+        />
+        <Row
+          id="worktree-default-path"
+          title={t('settings.layout.label')}
+          // The explanation IS the chosen path: which directory a checkout lands
+          // in is the one thing this row decides, and the answer changes with the
+          // choice rather than repeating it.
+          description={t(layoutPathKey(state.defaultPath.text))}
+          control={(
+            <ChoiceRow
+              id="worktree-default-path"
+              label={t('settings.layout.label')}
+              text={state.defaultPath.text}
+              options={WORKTREE_LAYOUTS.map(value => ({ value, label: t(`option.${value}` as WorktreeCopyKey) }))}
+              disabled={readOnly}
+              onEdit={(value) => { props.edit('defaultPath', value) }}
+            />
+          )}
+        />
+      </Card>
+      <Card id="backup" title={t('settings.backup.cardTitle')}>
+        <Row
+          id="worktree-file-guard"
+          title={t('settings.guard.label')}
+          description={t('settings.guard.hint')}
+          control={(
+            <Switch
+              checked={guardsFiles}
+              label={t('settings.guard.label')}
+              disabled={readOnly}
+              className={css.switchHit}
+              onChange={(next) => { props.edit('fileGuard', String(next)) }}
+            />
+          )}
+        />
+        <Row
+          id="worktree-deny-destructive"
+          title={t('settings.deny.label')}
+          description={guardsFiles ? t('settings.deny.hint') : t('settings.deny.inactive')}
+          control={(
+            <Switch
+              checked={state.denyDestructiveCommands.text !== 'false'}
+              label={t('settings.deny.label')}
+              disabled={readOnly || !guardsFiles}
+              onChange={(next) => { props.edit('denyDestructiveCommands', String(next)) }}
+            />
+          )}
+        />
+      </Card>
       {state.nestedScanDepth.invalid ? <p className={css.failed} role="status">{t('settings.invalidNumber')}</p> : null}
       {state.failed ? <p className={css.failed} role="status">{labels.saveFailed}</p> : null}
     </div>

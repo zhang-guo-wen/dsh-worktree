@@ -1,13 +1,19 @@
-/* The worktree settings page. The rows are the settings column's two-column
-   shape — label and explanation left, control right — matching the General
-   section's rows (PreferenceRow, FontSizeRow): pad 16/0, a hairline under each
-   row, 14px titles over 12px descriptions, and a single-line control on the
-   trailing edge. Valid edits save automatically without a button footer. */
+/* The file backup settings page, in two cards. Each row is the settings
+   column's two-column shape — label and explanation left, control right —
+   matching the General section's rows (PreferenceRow, FontSizeRow): pad 16/0, a
+   hairline under each row, 14px titles over 12px descriptions, and a
+   single-line control on the trailing edge. Valid edits save automatically
+   without a button footer.
+
+   The cards carry the settings cards' shared material: an R20 surface, a 0.5px
+   hairline, and the card fill, as the account, model and plugin cards do. No
+   elevation shadow belongs on them; a second neutral border over the shadow's
+   own hairline is the pairing the theme's elevation spec rejects. */
 
 /* One settings column, not a first-level page: the section lives inside the
    settings modal's content area (about 560px beside the 188px category nav),
    so it takes the settings column's own geometry — its own inline-size
-   container, capped at 760px — instead of a 960px page column. Title, rows and
+   container, capped at 760px — instead of a 960px page column. Title, cards and
    notices are children of this one flex column, so they share its width and
    left edge. Spacing stays on the rows' own margins, as the General rows do. */
 .page {
@@ -31,8 +37,30 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* One card per subject: the Worktree card's rows answer what a checkout looks
+   like, the backup card's rows answer what happens to files inside it. The
+   heading sits in the card's own padding, and the rows inside carry the 16px
+   vertical padding the cards that are not grouped this way keep on the column. */
+.card {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 12px;
+  padding: 16px;
+  border: 0.5px solid var(--dsw-alias-settings-card-stroke);
+  border-radius: var(--dsw-radius-xl);
+  background: var(--dsw-alias-settings-card-fill);
+}
+
+.cardTitle {
+  margin: 0 0 4px;
+  font: var(--dsw-font-s-strong-14);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The Git state is one line of context inside the Worktree card, on its own
+   row rather than trailing the heading. */
 .gitStatus {
-  margin: 0 0 8px;
+  margin: 0 0 4px;
   padding: 8px 12px;
   border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-module-platform);
@@ -56,6 +84,16 @@
   gap: 8px;
   padding: 16px 0;
   border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+/* The stroke closes the card, so the last row does not draw a second one on
+   top of it. The first row instead keeps the heading's 4px apart from it. */
+.card > .row:first-of-type {
+  margin-top: 4px;
+}
+
+.card > .row:last-child {
+  border-bottom: 0;
 }
 
 /* The text column keeps the control clear of it: a long explanation wraps
@@ -192,8 +230,10 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The card above already carries the 12px gap to whatever follows it, so a
+   failure line sits in that gap rather than adding a second one. */
 .failed {
-  margin: 12px 0 0;
+  margin: 0 0 12px;
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-state-error-primary);
 }
@@ -204,6 +244,12 @@
    point (PluginInventorySettingsTab), because this column is capped at 760px
    and a 760px rule would fire at its normal width. */
 @container worktree-settings (max-width: 520px) {
+  /* The card's padding comes in with the column, so the rows keep the width
+     they had when they sat directly on it. */
+  .card {
+    padding: 12px;
+  }
+
   .row {
     flex-wrap: wrap;
     align-items: flex-start;
