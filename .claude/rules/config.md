@@ -22,7 +22,7 @@ paths:
     newSessionWorktree: false       # 新会话是否**自动**创建 worktree 并在其中开始（默认关；开 = 勾选即开始那条路自动走一遍）
     fileGuard: true                 # 见 `.claude/rules/file-guard.md` 的「改动前保护」：开（默认）| 关
     denyDestructiveCommands: true   # 删除类命令是否拒掉并要求先申报目标（fileGuard 关时无效）
-    backupSidebar: true             # 右侧边栏是否提供「文件备份」页（默认开；关 = 连标签类型都不注册）
+    backupSidebar: true             # 右侧边栏是否提供「变更记录」页（默认开；关 = 连标签类型都不注册）
     # 以下只在启动时生效，改完要重启 host
     agentsDirectory: .agents/worktree   # defaultPath: agents 时的工作区子目录；缺的层级会自动创建
     gitTimeoutMs: 60000             # 单次 git 调用的上限（子模块拉网络时会用满它）

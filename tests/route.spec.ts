@@ -490,4 +490,29 @@ describe('/worktree/api backup methods', () => {
     expect(escape.status).toBe(404)
     expect(existsSync(join(harness.sessionWorkspace, '..', '..', 'outside.txt'))).toBe(false)
   })
+
+  it('serves one copy\'s comparison, resolving the target from the session and never the request', async () => {
+    const harness = await mount()
+    const changed = await protect(harness, 'src/a.ts', 'a\nb\nc\n', 'a\nB\nc\n')
+
+    const compared = await call(harness, 'compare', { sessionId: harness.sessionId, relative: 'src/a.ts' })
+    expect(compared.status).toBe(200)
+    expect(compared.body).toMatchObject({
+      relative: 'src/a.ts',
+      path: changed,
+      name: 'src/a.ts',
+      state: 'modified',
+      kind: 'text',
+    })
+    const comparison = compared.body.comparison as { rows: { kind: string }[]; added: number; deleted: number }
+    expect(comparison.rows.map(row => row.kind)).toEqual(['context', 'change', 'context'])
+    expect(comparison).toMatchObject({ added: 1, deleted: 1 })
+
+    // The target comes from the session's own cwd, exactly as a restore's does:
+    // a request naming a copy this session never took answers 404, and a missing
+    // field is the caller's mistake (400).
+    expect((await call(harness, 'compare', { sessionId: harness.sessionId, relative: 'nope.txt' })).status).toBe(404)
+    expect((await call(harness, 'compare', { sessionId: harness.sessionId })).status).toBe(400)
+    expect((await call(harness, 'compare', { sessionId: 'session-elsewhere', relative: 'src/a.ts' })).status).toBe(404)
+  })
 })

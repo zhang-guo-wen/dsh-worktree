@@ -16,7 +16,7 @@ Select a base branch and tick `worktree` to create a workspace and open the new 
 
 ![The worktree control on the New Session screen](<docs/images/new-session.png>)
 
-The settings page carries two cards: **Worktree settings** on top for whether new sessions start in a worktree, child repositories, scan depth, and storage location, and **Automatic backup** below for the protection switches and the backup page. Valid changes save automatically and take effect immediately; no Save or Reset to default button is needed.
+The settings page carries two cards: **Worktree settings** on top for whether new sessions start in a worktree, child repositories, scan depth, and storage location, and **Automatic backup** below for the protection switches and the change-history page. Valid changes save automatically and take effect immediately; no Save or Reset to default button is needed.
 
 ![The File backup settings page](<docs/images/file-backup-settings.png>)
 
@@ -24,7 +24,7 @@ The settings page carries two cards: **Worktree settings** on top for whether ne
 
 **On by default.** The first time the AI is about to change a file that already exists, that file's current content is copied out of the workspace — so a bad edit or a deletion can still be recovered.
 
-The **Automatic backup** card on the settings page has three switch rows: **Session file protection** (on by default), **Block delete commands** (on by default), and **Show the backup sidebar** (on by default). Changes take effect immediately, with no restart.
+The **Automatic backup** card on the settings page has three switch rows: **Session file protection** (on by default), **Block delete commands** (on by default), and **Show the change history sidebar** (on by default). Changes take effect immediately, with no restart.
 
 Copies live in `~/.agents/file-guard/<session hash>/` and **mirror the workspace layout**, so recovery is copying the file back: no tool and no index needed. Files outside the working directory (another folder, another drive) go under `external/` with their own path preserved. **The copy is byte-level, so format does not matter**: `.docx`, `.pptx`, and `.xlsx` are treated exactly like `.txt`.
 
@@ -45,15 +45,18 @@ Rules worth knowing:
 
 For complete history, or recovery across machines and time, use Git commits. This feature exists for "the AI just broke this and I want the previous version back".
 
-## Restoring from the sidebar
+## Change history in the sidebar
 
-**On by default.** The right sidebar offers a **File backup** page — open it from the sidebar's own Start page, and use the page-refresh shortcut inside it to read the list again. It lists the files **this session changed or deleted**, one flat row each and no directory tree, with only the path and a **Restore** button, without state badges. Deleted paths are struck through; a successful restore removes the strike.
+**On by default.** The right sidebar offers a **Change history** page — open it from the sidebar's own Start page, and use the page-refresh shortcut inside it to read the list again. It lists the files **this session changed or deleted**, one flat row each and no directory tree, with only the path and a **Restore** button, without state badges. Deleted paths are struck through; a successful restore removes the strike.
 
 - **Modified** means the file's content no longer matches its copy; **Deleted** means the file is gone. A copy whose file is still byte-identical is left out, because there is nothing to restore.
 - **Restore** writes that one copy back over its file, creating the directories again if the file had been deleted. The copy itself is kept, so the same row can put the file back after a later change.
+- **Compare** — click a row's path to open a two-column view: the copy from before this session first changed the file on the left, the current file on the right, aligned line by line. Changed lines are tinted and sit opposite each other; a collapsed band stands for a run of unchanged lines. Each side scrolls sideways on its own because the two may have different line lengths, while vertical scrolling moves both together, and the view opens on the first change.
+- The comparison compares **the two files on disk — no Git involved**, so it works the same whether or not Git is installed. Its left side is the state before this session's first change, so it shows everything changed since then, including edits another session made to a shared working directory.
+- A binary file (`.docx`, `.xlsx`, an image), a side over 2 MiB, or a path that is no longer a regular file is reported with its sizes instead of a line comparison; **Restore stays available**. A very large text file shows the beginning of the comparison and says it is truncated.
 - Each row reports its own outcome — restoring, restored, or the Host's reason for a refusal. A restored row disappears on the next read, because the file then matches its copy.
 - The list covers **this session's copies only**: they live and die with the session.
-- The **Show the backup sidebar** switch turns the page itself on or off. Off, it is not registered at all — no tab type and no entry on the sidebar's Start page — so the sidebar keeps only the pages you chose. A tab opened before the switch was turned off keeps its "nothing here can view this" notice until it is closed.
+- The **Show the change history sidebar** switch turns the page itself on or off. Off, it is not registered at all — no tab type and no entry on the sidebar's Start page — so the sidebar keeps only the pages you chose. A tab opened before the switch was turned off keeps its "nothing here can view this" notice until it is closed.
 
 ## Install
 

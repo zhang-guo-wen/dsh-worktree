@@ -55,13 +55,15 @@
  */
 
 import { createHash } from 'node:crypto'
-import { copyFile, mkdir, open, readdir, rm, stat } from 'node:fs/promises'
+import { copyFile, mkdir, open, readdir, readFile, rm, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 // Pulls the `tools/*` event declarations into this program's type face. The
 // registration itself lives in the plugin entry, so this module carries no
 // runtime dependency on the tool registry.
 import type { PreToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
+import { compareTexts } from './compare.ts'
+import type { Comparison, ComparisonKind } from './comparison-types.ts'
 import type { FileGuardOptions } from './policy.ts'
 
 /** Tool argument names that carry the path a call is about to change. */
@@ -145,6 +147,32 @@ export interface BackupEntry {
   readonly backup: string
   /** `modified` — the file differs from its copy; `deleted` — the file is gone. */
   readonly state: 'modified' | 'deleted'
+}
+
+/**
+ * One protected file compared with the file it stands for.
+ *
+ * `text` carries a line comparison; every other kind exists because the sides
+ * cannot be shown line by line, and the byte sizes are all the detail view can
+ * say about them.
+ */
+export interface BackupComparison {
+  /** The copy's path inside the session's directory, the key the view was opened with. */
+  readonly relative: string
+  /** Absolute path the current file occupies, or would occupy after a restore. */
+  readonly path: string
+  /** The path the list shows for this file. */
+  readonly name: string
+  /** `modified` — the file differs from its copy; `deleted` — the file is gone. */
+  readonly state: 'modified' | 'deleted'
+  /** What the two sides are, for the reader. */
+  readonly kind: ComparisonKind
+  /** Bytes the copy holds. */
+  readonly beforeBytes: number
+  /** Bytes the current file holds; zero when it is gone. */
+  readonly afterBytes: number
+  /** The line comparison, present exactly when {@link kind} is `text`. */
+  readonly comparison?: Comparison
 }
 
 /**
@@ -363,6 +391,73 @@ export class FileGuard {
     await mkdir(dirname(target), { recursive: true })
     await copyFile(source, target)
     return { path: target, bytes: info.size }
+  }
+
+  /**
+   * Compare one protected file with the file it stands for.
+   *
+   * The two sides are read from disk: the copy the guard kept before this
+   * session first changed the file, and the file where it is now. The read is
+   * lazy — the list never reads content — and bounded, because a copy can be any
+   * size: a side over the byte cap is reported without content rather than
+   * loaded, and a side that is not UTF-8 text (a document, an archive, an
+   * image — the formats the guard deliberately protects) is reported as binary.
+   *
+   * The target is resolved from the session's own working directory, exactly as
+   * a restore resolves it: the request names a copy, never a path to read.
+   * @param session - the session holding the copy.
+   * @param workspace - the absolute working directory the copy's path resolves against.
+   * @param relative - the copy's path below the session directory.
+   * @returns the comparison, or the reason content cannot be shown line by line.
+   * @throws {NoSuchBackupError} when no copy exists at that path.
+   */
+  async compare(session: string, workspace: string, relative: string): Promise<BackupComparison> {
+    const directory = join(this.directory, sessionKeyOf(session))
+    const source = contained(directory, relative)
+    const target = source === undefined ? undefined : targetOf(workspace, relative)
+    if (source === undefined || target === undefined) throw new NoSuchBackupError(session, relative)
+    let copyInfo
+    try {
+      copyInfo = await stat(source)
+    } catch (error: unknown) {
+      if (isMissing(error)) throw new NoSuchBackupError(session, relative)
+      throw error
+    }
+    if (!copyInfo.isFile()) throw new NoSuchBackupError(session, relative)
+
+    const name = nameOf(relative, target)
+    let fileInfo
+    try {
+      fileInfo = await stat(target)
+    } catch (error: unknown) {
+      if (!isMissing(error)) throw error
+      fileInfo = undefined
+    }
+    const state = fileInfo === undefined ? 'deleted' : 'modified'
+    // A path that is no longer a regular file holds no text to compare; the
+    // reason is the answer, because reading it would fail for a directory.
+    if (fileInfo !== undefined && !fileInfo.isFile()) {
+      return { relative, path: target, name, state, kind: 'unreadable', beforeBytes: copyInfo.size, afterBytes: 0 }
+    }
+    const beforeBytes = copyInfo.size
+    const afterBytes = fileInfo === undefined ? 0 : fileInfo.size
+    if (beforeBytes > MAX_COMPARISON_BYTES || afterBytes > MAX_COMPARISON_BYTES) {
+      return { relative, path: target, name, state, kind: 'oversized', beforeBytes, afterBytes }
+    }
+
+    const [copyBytes, fileBytes] = await Promise.all([
+      readFile(source),
+      fileInfo === undefined ? Promise.resolve(undefined) : readFile(target),
+    ])
+    const before = decodeText(copyBytes)
+    const after = fileBytes === undefined ? null : decodeText(fileBytes)
+    if (before === undefined || after === undefined) {
+      return { relative, path: target, name, state, kind: 'binary', beforeBytes, afterBytes }
+    }
+    return {
+      relative, path: target, name, state, kind: 'text', beforeBytes, afterBytes,
+      comparison: compareTexts(before, after),
+    }
   }
 
   /**
@@ -719,6 +814,15 @@ async function difference(copy: string, target: string): Promise<'modified' | 'd
 const COMPARE_CHUNK = 64 * 1024
 
 /**
+ * Bytes one side of a comparison may hold.
+ *
+ * Reading is what turns a sidebar click into memory and CPU, so a file above
+ * this bound is reported with its size instead of being loaded: the copy has no
+ * size cap, and a single 3 GB file must not be read to fill a pane.
+ */
+const MAX_COMPARISON_BYTES = 2 * 1024 * 1024
+
+/**
  * Whether two files hold the same bytes, stopping at the first difference.
  * @param left - absolute path of the first file.
  * @param right - absolute path of the second file.
@@ -740,6 +844,26 @@ async function sameBytes(left: string, right: string): Promise<boolean> {
     }
   } finally {
     await Promise.all([first.close(), second.close()])
+  }
+}
+
+/**
+ * Decode one side of a comparison as UTF-8 text.
+ *
+ * A NUL byte is what other diff tools also use as the text/binary boundary, and
+ * a byte sequence that is not valid UTF-8 (UTF-16, a legacy code page, a zip
+ * container) is not text this view could render faithfully. Neither is an
+ * error: the caller reports the side as binary and leaves the restore intact.
+ * @param bytes - the side's bytes.
+ * @returns the text, or undefined when the bytes are not UTF-8 text.
+ */
+function decodeText(bytes: Buffer): string | undefined {
+  if (bytes.includes(0)) return undefined
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    // Invalid UTF-8 is the answer to "is this text", not a failure to report.
+    return undefined
   }
 }
 

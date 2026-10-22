@@ -2,17 +2,17 @@
  * Worktree surface, browser half.
  *
  * Registers the `worktree` dictionaries, one chip on the new-session screen,
- * the file-backup page in the right sidebar, and the settings page that owns
+ * the change-history page in the right sidebar, and the settings page that owns
  * this plugin's policy. The chip stages "start this session inside a new
  * worktree"; the Host route it calls creates the checkout, registers its
  * project, and starts the session there as one operation. The settings page
  * edits the live policy that creation runs under, so what a deployment decides
  * in its profile the user can change per machine without restarting the Host.
  *
- * The backup page is a right-Sidebar tab type whose body lists the copies the
- * Host's file guard took before this session changed a file, each with a
- * restore control; the same settings page's `backupSidebar` switch decides
- * whether that type is registered at all.
+ * The change-history page is a right-Sidebar tab type whose body lists the
+ * copies the Host's file guard took before this session changed a file, each
+ * with a restore control and a two-column comparison; the same settings page's
+ * `backupSidebar` switch decides whether that type is registered at all.
  *
  * The chip is registered while a BLANK main Session is current, because a
  * Session's working directory is fixed at creation: the choice exists only
@@ -58,7 +58,7 @@ import { CheckoutNoticeToast, observeCheckouts } from './checkout-notice.tsx'
 import type { CheckoutNotice, CheckoutNoticeInjected } from './checkout-notice.tsx'
 import { BackupPanel } from './BackupPanel.tsx'
 import type { BackupPanelInjected } from './BackupPanel.tsx'
-import { request, type BackupListResult, type CheckoutProbeResult, type RestoreResult } from './api.ts'
+import { request, type BackupComparison, type BackupListResult, type CheckoutProbeResult, type RestoreResult } from './api.ts'
 import { WorktreeSeatController } from './seat-store.ts'
 import { openWithDraft } from './draft-transfer.ts'
 import { WorktreeSettingsSection } from './SettingsSection.tsx'
@@ -69,7 +69,17 @@ import { en, NS, zh, type WorktreeCopyKey } from './locales.ts'
 export type { WorktreeChipProps, WorktreeChipInjected } from './WorktreeChip.tsx'
 export type { WorktreeSettingsSectionProps } from './SettingsSection.tsx'
 export type { BackupPanelProps, BackupPanelInjected } from './BackupPanel.tsx'
-export type { BackupEntry, BackupListResult, RestoreResult } from './api.ts'
+export type { BackupDetailProps } from './BackupDetail.tsx'
+export type {
+  BackupComparison,
+  BackupEntry,
+  BackupListResult,
+  Comparison,
+  ComparisonKind,
+  ComparisonLine,
+  ComparisonRow,
+  RestoreResult,
+} from './api.ts'
 export type { WorktreeSettings, WorktreeSettingsFace, WorktreeSettingsState } from './settings-store.ts'
 export type { WorktreeSeatState } from './seat-store.ts'
 export type { CheckoutNotice, CheckoutNoticeProps, CheckoutProbe, CheckoutNoticeInjected } from './checkout-notice.tsx'
@@ -118,7 +128,7 @@ export function apply(ctx: Context): void {
     inject: () => settings.inject(),
   }, WorktreeSettingsSection))), 'ui-worktree: settings page')
 
-  // The file-backup page, as a right-Sidebar tab type and the body under it.
+  // The change-history page, as a right-Sidebar tab type and the body under it.
   //
   // The settings switch decides whether the TYPE exists at all: off, nothing
   // registers, so the page has no entry on the sidebar's guide page and no tab
@@ -129,6 +139,7 @@ export function apply(ctx: Context): void {
   const backupFace: BackupPanelInjected = {
     list: sessionId => request<BackupListResult>('backups', { sessionId }),
     restore: (sessionId, relative) => request<RestoreResult>('restore', { sessionId, relative }),
+    compare: (sessionId, relative) => request<BackupComparison>('compare', { sessionId, relative }),
   }
   ctx.inject(['slots', 'sidebarRightTabs'], (scope: Context) => {
     const tabs = scope.sidebarRightTabs
@@ -166,11 +177,11 @@ export function apply(ctx: Context): void {
         registration?.()
         registration = undefined
       }
-    }, 'ui-worktree: file backup sidebar type')
+    }, 'ui-worktree: change history sidebar type')
     scope.effect(() => scope.slots.inject('sidebar.right.pane.tab', () => scope.slots.register(
       { name: 'sidebar.right.pane.tab', key: BACKUP_TAB_ID, locale: NS, inject: () => backupFace },
       BackupPanel,
-    )), 'ui-worktree: file backup page body')
+    )), 'ui-worktree: change history page body')
   })
 
   // The archive flow's second notice. It reads the Workspace list the sidebar

@@ -1,12 +1,17 @@
 /**
- * The file-backup page's body: one row per file this session's guard copied
- * before changing it, and the control that puts one copy back.
+ * The change-history page's body: one row per file this session's guard copied
+ * before changing it, the control that puts one copy back, and the two-column
+ * comparison opened from a row.
  *
  * The list is flat on purpose. The copies mirror the workspace's own tree, but
  * the question this page answers is "which files changed", and a reader
  * scanning for the file the AI just broke goes by name — so the row carries the
  * path that identifies it and nothing nests. That also keeps a restore's meaning
  * obvious: one row, one file, one button.
+ *
+ * Opening a row replaces the list with that file's comparison and a way back:
+ * two columns need width, and the pane the list lives in has more of it to give
+ * a single comparison than a row can spare.
  *
  * Nothing here subscribes to anything. The list is read when the page mounts
  * and when the reader refreshes it, and a restore's outcome is this body's own
@@ -21,8 +26,9 @@ import { Button, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-pr
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: pulls the right Sidebar's tab seat and its `useTabInfo` hook.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import type { BackupEntry, BackupListResult, RestoreResult, RouteResult } from './api.ts'
+import type { BackupComparison, BackupEntry, BackupListResult, RestoreResult, RouteResult } from './api.ts'
 import type { WorktreeCopyKey } from './locales.ts'
+import { BackupDetail } from './BackupDetail.tsx'
 import css from './BackupPanel.module.css'
 
 /** Rows drawn while the first read is in flight. */
@@ -48,6 +54,13 @@ export interface BackupPanelInjected {
    * @returns the path written, or the Host's refusal.
    */
   restore: (sessionId: string, relative: string) => Promise<RouteResult<RestoreResult>>
+  /**
+   * Read one copy's line-by-line comparison with the file it stands for.
+   * @param sessionId - the session holding the copy.
+   * @param relative - the copy's path below the session's backup directory.
+   * @returns the comparison, or the Host's refusal.
+   */
+  compare: (sessionId: string, relative: string) => Promise<RouteResult<BackupComparison>>
 }
 
 /** Full component props. */
@@ -77,14 +90,17 @@ type RowState =
  * @param props - the seat's runtime shares, this plugin's copy, and the data face.
  * @returns the page.
  */
-export function BackupPanel({ useTabInfo, sessionId, list, restore, t }: BackupPanelProps): ReactNode {
+export function BackupPanel({ useTabInfo, sessionId, list, restore, compare, t }: BackupPanelProps): ReactNode {
   const { tab } = useTabInfo()
   const [state, setState] = useState<PanelState>({ status: 'loading', entries: [] })
   const [rows, setRows] = useState<Readonly<Record<string, RowState>>>({})
   const [revision, setRevision] = useState(0)
+  const [selected, setSelected] = useState<BackupEntry | undefined>(undefined)
+  const [detailRevision, setDetailRevision] = useState(0)
   const alive = useRef(true)
-  const reload = useCallback(() => { setRevision(value => value + 1) }, [])
+  useEffect(() => { alive.current = true }, [])
   useEffect(() => () => { alive.current = false }, [])
+  const reload = useCallback(() => { setRevision(value => value + 1) }, [])
   // The read is keyed on the session and the revision the reader asked for.
   // `list` is one value for the plugin's lifetime (the registration hands the
   // same face to every render), so it never re-runs the read on its own.
@@ -100,8 +116,13 @@ export function BackupPanel({ useTabInfo, sessionId, list, restore, t }: BackupP
     return () => { active = false }
   }, [list, sessionId, revision])
   // The page supports the sidebar's own refresh command, so the shortcut that
-  // refreshes every other page does the same thing here.
-  useEffect(() => tab.actions.bindCommands({ refresh: reload }), [tab.actions, reload])
+  // refreshes every other page does the same thing here — for whichever view is
+  // on screen, the list or one file's comparison.
+  const refresh = useCallback(() => {
+    if (selected === undefined) setRevision(value => value + 1)
+    else setDetailRevision(value => value + 1)
+  }, [selected])
+  useEffect(() => tab.actions.bindCommands({ refresh }), [tab.actions, refresh])
 
   const onRestore = (entry: BackupEntry): void => {
     setRows(current => ({ ...current, [entry.relative]: { kind: 'restoring' } }))
@@ -112,6 +133,29 @@ export function BackupPanel({ useTabInfo, sessionId, list, restore, t }: BackupP
         : { kind: 'failed', message: result.message }
       setRows(current => ({ ...current, [entry.relative]: next }))
     })
+  }
+
+  const onOpen = (entry: BackupEntry): void => {
+    setDetailRevision(value => value + 1)
+    setSelected(entry)
+  }
+
+  if (selected !== undefined) {
+    return (
+      <BackupDetail
+        sessionId={sessionId}
+        entry={selected}
+        revision={detailRevision}
+        onBack={() => { setSelected(undefined) }}
+        onRestored={() => {
+          setRows(current => ({ ...current, [selected.relative]: { kind: 'restored' } }))
+          setDetailRevision(value => value + 1)
+        }}
+        compare={compare}
+        restore={restore}
+        t={t}
+      />
+    )
   }
 
   const busy = state.status === 'loading'
@@ -142,7 +186,14 @@ export function BackupPanel({ useTabInfo, sessionId, list, restore, t }: BackupP
       {state.entries.length > 0 ? (
         <ul className={css.list} data-backup-state="ready" aria-busy={busy}>
           {state.entries.map(entry => (
-            <Row key={entry.relative} entry={entry} row={rows[entry.relative]} onRestore={onRestore} t={t} />
+            <Row
+              key={entry.relative}
+              entry={entry}
+              row={rows[entry.relative]}
+              onRestore={onRestore}
+              onOpen={onOpen}
+              t={t}
+            />
           ))}
         </ul>
       ) : state.status === 'loading' ? (
@@ -159,14 +210,16 @@ export function BackupPanel({ useTabInfo, sessionId, list, restore, t }: BackupP
 }
 
 /**
- * One file's row: what it is, how it differs, and the button that puts it back.
- * @param props - the entry, the row's own outcome, the restore action, and copy.
+ * One file's row: what it is, how it differs, and the controls that open its
+ * comparison or put its copy back.
+ * @param props - the entry, the row's own outcome, the row actions, and copy.
  * @returns the row.
  */
-function Row({ entry, row, onRestore, t }: {
+function Row({ entry, row, onRestore, onOpen, t }: {
   entry: BackupEntry
   row: RowState | undefined
   onRestore: (entry: BackupEntry) => void
+  onOpen: (entry: BackupEntry) => void
   t: (key: WorktreeCopyKey, params?: Record<string, string>) => string
 }): ReactNode {
   // Three visible states, not a greyed button: a restore that is running, one
@@ -176,8 +229,14 @@ function Row({ entry, row, onRestore, t }: {
       : t('sidebar.restore')
   return (
     <li className={css.row} data-backup-row={entry.relative} data-backup-file={entry.state}>
-      <div className={css.rowText}>
-        <span className={css.name} title={t('sidebar.copyAt', { path: entry.backup })}>
+      <button
+        type="button"
+        className={css.open}
+        aria-label={t('sidebar.openDiff', { name: entry.name })}
+        title={t('sidebar.copyAt', { path: entry.backup })}
+        onClick={() => { onOpen(entry) }}
+      >
+        <span className={css.name}>
           {entry.state === 'deleted' && row?.kind !== 'restored'
             ? <s aria-label={`${entry.name} (${t('sidebar.state.deleted')})`}>{entry.name}</s>
             : entry.name}
@@ -185,7 +244,7 @@ function Row({ entry, row, onRestore, t }: {
         {row?.kind === 'failed' ? (
           <span className={css.failed}>{t('sidebar.restoreFailed', { message: row.message })}</span>
         ) : null}
-      </div>
+      </button>
       <Button
         variant="outline"
         size="sm"

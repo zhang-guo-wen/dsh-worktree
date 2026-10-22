@@ -13,13 +13,15 @@
 这不是风格选择——`dsh plugin add <git-url>` 取的是仓库根，包放在 `packages/*` 下会被装成错误的东西。
 
 - `src/` host 半边：`service.ts`（worktree 增删查 + 布局推导）、`route.ts`（`/worktree/api/*`）、`session.ts`、
-  `archive-cleanup.ts`（归档后清理）、`file-guard.ts` + `backup-tool.ts`（改动前保护）、`policy.ts` / `branch-rule.ts` / `validate.ts`（两侧共享）。
+  `archive-cleanup.ts`（归档后清理）、`file-guard.ts` + `backup-tool.ts`（改动前保护）、`compare.ts` + `comparison-types.ts`
+  （副本与当前文件的行级对比，两侧共享行类型）、`policy.ts` / `branch-rule.ts` / `validate.ts`（两侧共享）。
 - `src/client/` 浏览器半边：`WorktreeChip.*`（hero 行胶囊）、`seat-store.ts`、`draft-transfer.ts`、
-  `checkout-notice-*`（归档结果 toast）、`BackupPanel.*`（右侧边栏「文件备份」页：平铺列表 + 逐个还原）、
+  `checkout-notice-*`（归档结果 toast）、`BackupPanel.*`（右侧边栏「变更记录」页：平铺列表 + 逐个还原）、
+  `BackupDetail.*` + `diff-columns.ts`（同一标签页内的左右两栏对比）、
   `SettingsSection.*`（设置 → 文件备份：Worktree 设置与自动备份两张卡）、`settings-*.ts`。
 - `lib/` 构建产物（`index.mjs` host + `client.js` 浏览器 handoff）**已提交进仓库**，别人可以直接从 git 安装；
   改完源码**记得 `npm run build` 并把 `lib/` 一起提交**。
-- `tests/` 21 个 spec、`cordis.patch.yml` 组合插件行、`README*.md` / `docs/` 文档。
+- `tests/` 24 个 spec、`cordis.patch.yml` 组合插件行、`README*.md` / `docs/` 文档。
 - 逐组件职责与接线细节见 [.claude/rules/architecture.md](.claude/rules/architecture.md)。
 
 ## 构建与测试
@@ -46,6 +48,9 @@ npm run typecheck
 - **改动前保护**（fileGuard，默认开）：同一会话第一次的副本是权威的、第二次改动不覆盖；只保护已存在的文件；
   没有大小上限；每个会话一份、会话归档即删除。**结果必须回带副本的绝对路径**（`worktree_backup` 的文本与结构化输出、
   自动路径的日志）——否则拿到"已保护"的一方无从恢复。**不碰 `fs/*`**，删除类命令一律 `deny` 并点名 `worktree_backup`。
+- **对比（`compare`）只读副本与当前文件，不依赖 Git**：语义是「本会话首次改动前 → 现在」，不是"本会话改了什么"；
+  目标只由 Host 用会话 `cwd` 现算，绝不受理请求体里的路径。行级引擎是宿主侧 `src/compare.ts`（`diff` 依赖），
+  客户端只负责两列渲染；超 2 MiB / 二进制 / 非普通文件只回字节数，还原照常可用。
 - **归档清理两条触发腿（无轮询）**：`domain/changed`（storage-domain 在**落盘后**广播 workspace 域的全局 put）覆盖所有归档；事件发出时 registry 内存尚未更新，须延迟至下一事件循环再读 `workspaceRegistry.archivedSessionIds`，不读 payload。`workspace/session-stop` 只在「停止并归档」发出，是并行取消请求，**不保证回合已停下**；FileGuard 关闭该会话的保护，防止晚到备份重建。备份删除逐会话捕获失败，后续归档事件重试，不阻断其他会话或 checkout 清理。`removeOnSessionArchive` 只控制 checkout，两条触发均须遵守。**不追溯、无启动补扫**：启动集合直接记为 `handled`，仅清理运行期新归档；取消归档清除待重试并恢复保护。三条不变量：不拦截归档（失败降级为日志）、不丢工作（脏目录保留）、并发串行。
 - **记忆不隔离是刻意的**：worktree 是独立工作区、文件与授权各自独立，但 `{project}` 回溯到主仓库，记忆与上下文共享。
 - `ctx.get('x')` 取服务，**不要** `ctx.x`；CSS module 里 JSX 引用的类必须都有定义，否则静默无样式。
@@ -79,8 +84,8 @@ npm run typecheck
 - [.claude/rules/nested-repositories.md](.claude/rules/nested-repositories.md)：子模块与独立嵌套仓库的创建/删除、扫描层级、三种存储布局。
 - [.claude/rules/archive-cleanup.md](.claude/rules/archive-cleanup.md)：归档删除的触发时机、6 步判定链、三条不变量。
 - [.claude/rules/checkout-notice.md](.claude/rules/checkout-notice.md)：归档结果记录（removed / kept / unknown）与浏览器第二条通知。
-- [.claude/rules/file-guard.md](.claude/rules/file-guard.md)：改动前保护的发现机制、删除命令拦截、四条不变量、备份存储与失败语义，以及列出与还原（`list` / `restore`、路由 `backups` / `restore`）。
+- [.claude/rules/file-guard.md](.claude/rules/file-guard.md)：改动前保护的发现机制、删除命令拦截、四条不变量、备份存储与失败语义，以及列出、还原与对比（`list` / `restore` / `compare`，路由 `backups` / `restore` / `compare`）。
 - [.claude/rules/config.md](.claude/rules/config.md)：全部配置字段与默认值、volatile 分界、设置页写入 profile 的规则。
-- [.claude/rules/client-ui.md](.claude/rules/client-ui.md)：手机断点、hero 行 CSS 对齐、草稿迁移时序、设置页列宽与触摸尺寸、右侧边栏文件备份页的注册与平铺列表。
-- [.claude/rules/failure-modes.md](.claude/rules/failure-modes.md)：失败模式总表与易崩清单 11 条。
+- [.claude/rules/client-ui.md](.claude/rules/client-ui.md)：手机断点、hero 行 CSS 对齐、草稿迁移时序、设置页列宽与触摸尺寸、右侧边栏变更记录页的注册、平铺列表与左右两栏对比。
+- [.claude/rules/failure-modes.md](.claude/rules/failure-modes.md)：失败模式总表与易崩清单 16 条。
 - [.claude/rules/build-test-release.md](.claude/rules/build-test-release.md)：安装变体、构建流水线、两条测试命令与用例覆盖、发版打 tag。

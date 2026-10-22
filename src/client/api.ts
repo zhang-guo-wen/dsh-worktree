@@ -3,11 +3,15 @@
  *
  * The route carries the operations this plugin's UI needs that no generic
  * Remote exposes: create a checkout, register its project, and start a session
- * in it; list the files the guard copied before changing them, and put one
- * copy back. Everything else (listing workspaces, opening a session) goes
- * through the composed client services.
+ * in it; list the files the guard copied before changing them, preview one
+ * copy against the file it stands for, and put a copy back. Everything else
+ * (listing workspaces, opening a session) goes through the composed client
+ * services.
  * @module @guowenzhang/dsh-worktree/client/api
  */
+
+import type { Comparison, ComparisonKind } from '../comparison-types.ts'
+export type { Comparison, ComparisonKind, ComparisonLine, ComparisonRow } from '../comparison-types.ts'
 
 /** The route prefix both halves agree on. */
 const ROUTE = '/worktree/api'
@@ -119,6 +123,26 @@ export interface RestoreResult {
   readonly bytes: number
 }
 
+/** One protected file compared with the file it now stands for. */
+export interface BackupComparison {
+  /** The copy's path inside the session's directory; the key the view was opened with. */
+  readonly relative: string
+  /** Absolute path the current file occupies, or would occupy after a restore. */
+  readonly path: string
+  /** The path the list shows for this file. */
+  readonly name: string
+  /** `modified` — the file differs from its copy; `deleted` — the file is gone. */
+  readonly state: 'modified' | 'deleted'
+  /** What the two sides are: text with a comparison, or the reason they are not. */
+  readonly kind: ComparisonKind
+  /** Bytes the copy holds. */
+  readonly beforeBytes: number
+  /** Bytes the current file holds; zero when it is gone. */
+  readonly afterBytes: number
+  /** The line comparison, present exactly when `kind` is `text`. */
+  readonly comparison?: Comparison
+}
+
 /** The result of one route call. */
 export type RouteResult<T> =
   | { readonly ok: true; readonly value: T }
@@ -131,7 +155,7 @@ export type RouteResult<T> =
  * @returns the parsed value, or the Host's refusal text.
  */
 export async function request<T>(
-  method: 'start' | 'list' | 'branches' | 'init' | 'check' | 'checkout' | 'backups' | 'restore',
+  method: 'start' | 'list' | 'branches' | 'init' | 'check' | 'checkout' | 'backups' | 'restore' | 'compare',
   body: Record<string, unknown>,
 ): Promise<RouteResult<T>> {
   let response: Response

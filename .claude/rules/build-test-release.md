@@ -51,7 +51,7 @@ npm install --force
 npm run build     # tsdown（host → lib/index.mjs）+ node build-client.mjs（lib/client.js）
 ```
 
-- host：`tsdown` 打 `src/index.ts` → `lib/index.mjs`，所有 `@deepseek-ai/*` 保持 external。
+- host：`tsdown` 打 `src/index.ts` → `lib/index.mjs`，所有 `@deepseek-ai/*` 保持 external；行级对比用的 `diff`（jsdiff）是**生产依赖**（`package.json` 的 `dependencies`，BSD-3-Clause、零传递依赖），在 `tsdown.config.ts` 的 `deps.neverBundle` 里同样保持 external，装插件时由包管理器安装。`package-lock.json` 必须一起更新。
 - client：`build-client.mjs`（rolldown）→ `lib/client.js`，包成 `window.__ModuleLoader__.load({ id, factory })`，react / `@deepseek-ai/*` external，`.module.css` 用 lightningcss 编译并内联。id 与 `HANDOFF_ID = '@guowenzhang/dsh-worktree'` 一致。
 - CSS module 的类名先按字母排序再写进产物：lightningcss 的 `exports` 对象没有稳定键序，不排序的话每次构建的 `lib/client.js` 字节都不同，提交进仓库的产物会天天出假 diff。
 - 开发装依赖时用 `npm install --force`：已发布的 Harness 线把 `@deepseek-ai/schemastery` 精确锁在 3.18.2，而本插件要用它的 `.volatile()`（≥ 3.18.4），peer 图会因此报 ERESOLVE。

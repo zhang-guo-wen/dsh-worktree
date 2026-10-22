@@ -16,7 +16,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { BackupPanel, type BackupPanelInjected, type BackupPanelProps } from '../src/client/BackupPanel.tsx'
-import type { BackupEntry, BackupListResult, RestoreResult, RouteResult } from '../src/client/api.ts'
+import type { BackupComparison, BackupEntry, BackupListResult, RestoreResult, RouteResult } from '../src/client/api.ts'
 import { zh, type WorktreeCopyKey } from '../src/client/locales.ts'
 
 afterEach(cleanup)
@@ -24,6 +24,30 @@ afterEach(cleanup)
 /** One listed copy, as the Host reports it. */
 function entry(name: string, state: 'modified' | 'deleted'): BackupEntry {
   return { relative: name, path: `/w/${name}`, name, backup: `/guard/${name}`, state }
+}
+
+/** One comparison the Host would serve for `src/a.ts`. */
+function comparison(): BackupComparison {
+  return {
+    relative: 'src/a.ts',
+    path: '/w/src/a.ts',
+    name: 'src/a.ts',
+    state: 'modified',
+    kind: 'text',
+    beforeBytes: 6,
+    afterBytes: 6,
+    comparison: {
+      rows: [
+        { kind: 'context', left: { no: 1, text: 'a' }, right: { no: 1, text: 'a' } },
+        { kind: 'change', left: { no: 2, text: 'b' }, right: { no: 2, text: 'B' } },
+        { kind: 'context', left: { no: 3, text: 'c' }, right: { no: 3, text: 'c' } },
+      ],
+      added: 1,
+      deleted: 1,
+      truncated: false,
+      coarse: false,
+    },
+  }
 }
 
 /** This plugin's copy, with the placeholders the page passes filled in. */
@@ -42,20 +66,25 @@ interface Mounted {
   readonly reads: string[]
   /** The restore requests the page made, in order. */
   readonly restores: [string, string][]
+  /** The comparison reads the detail view made, in order. */
+  readonly compares: [string, string][]
 }
 
 /**
  * Mount the page over stubbed reads.
  * @param stubs.list - answer for one backup read; defaults to an empty list.
  * @param stubs.restore - answer for one restore; defaults to success.
+ * @param stubs.compare - answer for one comparison read; defaults to a refusal.
  * @returns the calls the page made.
  */
 async function mount(stubs: {
   list?: () => Promise<RouteResult<BackupListResult>>
   restore?: () => Promise<RouteResult<RestoreResult>>
+  compare?: () => Promise<RouteResult<BackupComparison>>
 } = {}): Promise<Mounted> {
   const reads: string[] = []
   const restores: [string, string][] = []
+  const compares: [string, string][] = []
   const face: BackupPanelInjected = {
     list: (sessionId) => {
       reads.push(sessionId)
@@ -64,6 +93,10 @@ async function mount(stubs: {
     restore: (sessionId, relative) => {
       restores.push([sessionId, relative])
       return stubs.restore?.() ?? Promise.resolve({ ok: true, value: { path: `/w/${relative}`, bytes: 1 } })
+    },
+    compare: (sessionId, relative) => {
+      compares.push([sessionId, relative])
+      return stubs.compare?.() ?? Promise.resolve({ ok: false, message: 'comparison not stubbed' })
     },
   }
   // The seat binds this hook; one stable object keeps the component's effects
@@ -77,7 +110,7 @@ async function mount(stubs: {
     t: (key: WorktreeCopyKey, params?: Record<string, string>) => copy(key, params),
   } as unknown as BackupPanelProps
   await act(async () => { render(<BackupPanel {...props} />) })
-  return { reads, restores }
+  return { reads, restores, compares }
 }
 
 describe('the file-backup page', () => {
@@ -180,5 +213,84 @@ describe('the file-backup page', () => {
     expect(screen.getByText('src/a.ts')).toBeDefined()
     expect(screen.getByRole('button', { name: copy('sidebar.refresh') }).hasAttribute('disabled')).toBe(true)
     expect(reads).toBe(2)
+  })
+
+  it('opens one file\'s two-column comparison and returns to the list', async () => {
+    const mounted = await mount({
+      list: async () => ({ ok: true, value: { entries: [entry('src/a.ts', 'modified')] } }),
+      compare: async () => ({ ok: true, value: comparison() }),
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: copy('sidebar.openDiff', { name: 'src/a.ts' }) }))
+    })
+
+    expect(mounted.compares).toEqual([['session-1', 'src/a.ts']])
+    // Two panes, each named for the side it shows, and the changed line drawn
+    // on both of them.
+    expect(screen.getByLabelText(copy('diff.before'))).toBeDefined()
+    expect(screen.getByLabelText(copy('diff.after'))).toBeDefined()
+    expect(await screen.findByText('B')).toBeDefined()
+    expect(screen.getByText('b')).toBeDefined()
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: copy('sidebar.back') })) })
+
+    expect(screen.getByText('src/a.ts')).toBeDefined()
+    expect(screen.queryByLabelText(copy('diff.before'))).toBeNull()
+  })
+
+  it('says a deleted file has no right side instead of drawing an empty column silently', async () => {
+    await mount({
+      list: async () => ({ ok: true, value: { entries: [entry('src/a.ts', 'deleted')] } }),
+      compare: async () => ({
+        ok: true,
+        value: { ...comparison(), state: 'deleted', afterBytes: 0 },
+      }),
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: copy('sidebar.openDiff', { name: 'src/a.ts' }) }))
+    })
+
+    expect(await screen.findByText(copy('diff.deleted'))).toBeDefined()
+  })
+
+  it('explains a binary file with its sizes instead of drawing columns', async () => {
+    await mount({
+      list: async () => ({ ok: true, value: { entries: [entry('photo.png', 'modified')] } }),
+      compare: async () => ({
+        ok: true,
+        value: {
+          relative: 'photo.png', path: '/w/photo.png', name: 'photo.png', state: 'modified',
+          kind: 'binary', beforeBytes: 2048, afterBytes: 4096,
+        },
+      }),
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: copy('sidebar.openDiff', { name: 'photo.png' }) }))
+    })
+
+    expect(await screen.findByText(copy('diff.binary', { before: '2.0 KB', after: '4.0 KB' }))).toBeDefined()
+    expect(screen.queryByLabelText(copy('diff.before'))).toBeNull()
+  })
+
+  it('reports a refused comparison and re-reads it when the reader retries', async () => {
+    let answer: RouteResult<BackupComparison> = { ok: false, message: 'the copy vanished' }
+    const mounted = await mount({
+      list: async () => ({ ok: true, value: { entries: [entry('src/a.ts', 'modified')] } }),
+      compare: async () => answer,
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: copy('sidebar.openDiff', { name: 'src/a.ts' }) }))
+    })
+    expect(await screen.findByText(copy('diff.failed', { message: 'the copy vanished' }))).toBeDefined()
+
+    answer = { ok: true, value: comparison() }
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: copy('sidebar.retry') })) })
+
+    expect(mounted.compares).toHaveLength(2)
+    expect(await screen.findByText('B')).toBeDefined()
   })
 })

@@ -1,0 +1,181 @@
+/* One file's two-column comparison, drawn inside the right Sidebar's pane.
+   The panes are the only scrollers: each keeps its own horizontal offset
+   because the two sides' lines have different lengths, and their vertical
+   offsets are kept equal by the component so paired rows stay opposite each
+   other. Every colour is a `--dsw-alias-*` semantic token; the light and dark
+   themes stay the theme's business. */
+
+.page {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* One 38px bar flush under the pane's tab strip, matching the list's toolbar. */
+.header {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  align-items: center;
+  box-sizing: border-box;
+  height: 38px;
+  padding: 0 8px 0 8px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+.title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--dsw-font-xs-13);
+  color: var(--dsw-alias-label-primary);
+}
+
+.restore {
+  flex: 0 0 auto;
+}
+
+/* The two column names sit above the panes, one per equal half. */
+.columnHeaders {
+  display: flex;
+  flex: 0 0 auto;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.columnHeaders > span {
+  flex: 1 1 50%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 4px 10px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.columnHeaders > span + span {
+  border-left: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+.columns {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* One side's scroll container. Fixed-height rows are what keeps the columns
+   aligned without measuring: both panes draw the same rows at the same height. */
+.pane {
+  position: relative;
+  flex: 1 1 50%;
+  min-width: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  font: var(--dsw-font-markdown-code-block);
+  outline: none;
+}
+
+.pane + .pane {
+  border-left: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+.pane:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -2px;
+}
+
+/* The row list is as wide as its longest line, so a long line scrolls instead
+   of being clipped; each row stretches to that width so its tint covers it. */
+.rows {
+  width: max-content;
+  min-width: 100%;
+}
+
+.row {
+  display: flex;
+  box-sizing: border-box;
+  min-height: 1lh;
+  background: var(--dsw-alias-bg-base);
+  white-space: pre;
+}
+
+.row[data-cell='deleted'] {
+  background: var(--dsw-alias-code-diff-deleted);
+}
+
+.row[data-cell='added'] {
+  background: var(--dsw-alias-code-diff-added);
+}
+
+/* A hole opposite a changed line: same height, no content. */
+.row[data-cell='empty'] {
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+/* A collapsed run of unchanged lines: one row in both panes. */
+.row[data-cell='gap'] {
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+/* The line number stays put while its line scrolls sideways. */
+.no {
+  position: sticky;
+  left: 0;
+  flex: 0 0 auto;
+  min-width: 4ch;
+  padding: 0 8px 0 10px;
+  text-align: right;
+  color: var(--dsw-alias-label-tertiary);
+  background: inherit;
+  user-select: none;
+}
+
+.text {
+  flex: 0 0 auto;
+  padding: 0 22px 0 6px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.gap {
+  display: block;
+  padding: 0 10px;
+  font: var(--dsw-font-xxs-12);
+  line-height: 1lh;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* A note about the comparison's shape: truncation, a coarse fallback, a deleted
+   file. It explains what the reader is looking at rather than decorating it. */
+.note {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 8px 12px 0;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* A refusal and a read failure both carry the failure ink, matching the list. */
+.failed {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 8px 12px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-state-error-primary);
+  overflow-wrap: anywhere;
+}
+
+/* The empty and not-readable states say why nothing is drawn. */
+.notice {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 12px;
+  font: var(--dsw-font-xs-13);
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}

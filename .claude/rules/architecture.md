@@ -19,13 +19,14 @@ paths:
 |---|---|---|
 | `worktree` 服务 | `src/service.ts` | 仓库根解析、创建/列举/删除 linked worktree、按布局推导默认路径、linked checkout 探测（`inspectLinkedCheckout`）；git 调用与超时在 `src/git.ts`，主仓库回溯在 `src/repository.ts`，`worktree list --porcelain` 解析在 `src/porcelain.ts` |
 | 归档清理 | `src/archive-cleanup.ts` | 订阅 `workspace/session-stop`（归档落盘后的通知），删掉被归档会话的 linked checkout 与其工作区记录；同时把结果记进 outcome 表供浏览器半边读取（见 `.claude/rules/archive-cleanup.md` 的「归档清理」） |
-| 改动前保护 | `src/file-guard.ts` + `src/backup-tool.ts` | AI 第一次改动某个已存在文件之前，把它的字节复制到 `~/.agents/file-guard/<会话哈希>/`。自动路径靠 `tools/pre-execute` 的 `file_path`，明确路径靠模型调 `worktree_backup`；删除命令被拒；会话归档时整个目录删掉。不碰 `fs/*`。同一份副本树也是备份页的数据源：`list` 列出与副本不一致的文件、`restore` 把一份副本写回。见 `.claude/rules/file-guard.md` 的「改动前保护」与「列出与还原」两节 |
-| Host 路由 | `src/route.ts` | `POST /worktree/api/{start,list,branches,init-files,init,check,checkout,backups,restore}`：原子地"建 checkout → 注册工作区 → 开会话 → 把会话挂进该工作区"，并给界面提供本地分支列表、归档结果探测，以及文件备份的读取与还原（会话工作目录只由 Host 的会话存储决定，不读请求体）；开会话本身在 `src/session.ts` |
+| 改动前保护 | `src/file-guard.ts` + `src/backup-tool.ts` | AI 第一次改动某个已存在文件之前，把它的字节复制到 `~/.agents/file-guard/<会话哈希>/`。自动路径靠 `tools/pre-execute` 的 `file_path`，明确路径靠模型调 `worktree_backup`；删除命令被拒；会话归档时整个目录删掉。不碰 `fs/*`。同一份副本树也是备份页的数据源：`list` 列出与副本不一致的文件、`restore` 把一份副本写回、`compare` 把副本与当前文件做行级对比（不依赖 Git）。见 `.claude/rules/file-guard.md` 的「改动前保护」「列出与还原」「对比」三节 |
+| 行级对比引擎 | `src/compare.ts` + `src/comparison-types.ts` | 纯函数 `compareTexts(before, after)`：用 `diff`（jsdiff）的 `diffLines` 算行级差异，展开成 `context` / `change` / `gap` 行，长文件折叠未改动行、超限截断、超时退化为整块替换。`comparison-types.ts` 不 import 任何东西，Host 与浏览器半边共用同一套行类型 |
+| Host 路由 | `src/route.ts` | `POST /worktree/api/{start,list,branches,init-files,init,check,checkout,backups,restore,compare}`：原子地"建 checkout → 注册工作区 → 开会话 → 把会话挂进该工作区"，并给界面提供本地分支列表、归档结果探测，以及文件备份的读取、还原与对比（会话工作目录只由 Host 的会话存储决定，不读请求体）；开会话本身在 `src/session.ts` |
 | 浏览器控件 | `src/client/` | 新会话屏幕 `选择工作区 / 模式` 那一行右侧的一个胶囊：左边是本地分支下拉，右边是 `worktree` 勾选；`WorktreeChip.tsx` 渲染，`seat-store.ts` 管状态，`api.ts` 是路由客户端 |
-| 文件备份页（侧边栏） | `src/client/BackupPanel.tsx` + `BackupPanel.module.css` | 右侧边栏的 `worktree-backup` 标签页主体：把这个会话里被改动或删除的文件**平铺成一行一个**（不展示目录层次），每行显示路径、`已修改` / `已删除` 标签和**还原**按钮，按钮自身带「还原中 / 已还原 / 失败」三种可见状态。数据经注册时注入的 `list` / `restore` 走 Host 路由；`src/client/index.ts` 注册标签类型与「开始」页入口，开关关掉时整个类型注销 |
+| 变更记录页（侧边栏） | `src/client/BackupPanel.tsx` + `BackupPanel.module.css` | 右侧边栏的 `worktree-backup` 标签页主体：把这个会话里被改动或删除的文件**平铺成一行一个**（不展示目录层次），每行显示路径与**还原**按钮，按钮自身带「还原中 / 已还原 / 失败」三种可见状态。点路径把列表换成该文件的左右两栏对比（`BackupDetail.tsx` + `BackupDetail.module.css` + `diff-columns.ts`：左侧副本、右侧当前文件、逐行对齐、纵向联动滚动、打开定位第一处改动）。数据经注册时注入的 `list` / `restore` / `compare` 走 Host 路由；`src/client/index.ts` 注册标签类型与「开始」页入口，开关关掉时整个类型注销 |
 | 草稿迁移 | `src/client/draft-transfer.ts` | 切到新建 checkout 里的会话之前，把原输入框里未发送的草稿搬过去（文字、引用、附件一起），并保证任何一步失败都完整回滚、原草稿不丢 |
 | 归档通知（浏览器） | `src/client/checkout-notice-store.ts` + `checkout-notice.tsx` | 跟随 Workspace 列表，有人归档后行消失就探测 Host 的结果，**成功/保留各弹一条独立 toast**（`shell.overlay` 座位）；纯逻辑与渲染分开，前者能在自足 suite 里跑（见 `.claude/rules/checkout-notice.md`） |
-| 设置页 | `src/client/SettingsSection.tsx` | 设置 → **文件备份**，页内标题「文件备份」，两张卡片（`.card`，设置卡材料）。上卡「Worktree 设置」三行：**创建子仓库**开关（默认关）、**扫描层级**（默认 1）、**worktree 存储位置**（工作区内 / 仓库同级 / 用户目录；说明文字跟着选项显示对应路径）。下卡「自动备份」三行：**会话文件保护**开关（默认**开**）、**拦截删除命令**开关（默认开，需前者开启才可用）、**显示备份侧边栏**开关（默认**开**，同样需前者开启才可用）。无「恢复默认」或「保存」按钮。行式左右布局（同「通用设置」）。有效修改自动保存并即时生效，不需要重启；`settings-store.ts` 串行执行 revision-fenced 写入，保存期间的新修改排队保留，空值或非正整数扫描层级不写入配置，失败保留草稿并提示。字段的取值转换在 `src/client/settings-fields.ts`（无运行时依赖，所以可被自足 suite 直接测） |
+| 设置页 | `src/client/SettingsSection.tsx` | 设置 → **文件备份**，页内标题「文件备份」，两张卡片（`.card`，设置卡材料）。上卡「Worktree 设置」三行：**创建子仓库**开关（默认关）、**扫描层级**（默认 1）、**worktree 存储位置**（工作区内 / 仓库同级 / 用户目录；说明文字跟着选项显示对应路径）。下卡「自动备份」三行：**会话文件保护**开关（默认**开**）、**拦截删除命令**开关（默认开，需前者开启才可用）、**显示变更记录侧边栏**开关（默认**开**，同样需前者开启才可用）。无「恢复默认」或「保存」按钮。行式左右布局（同「通用设置」）。有效修改自动保存并即时生效，不需要重启；`settings-store.ts` 串行执行 revision-fenced 写入，保存期间的新修改排队保留，空值或非正整数扫描层级不写入配置，失败保留草稿并提示。字段的取值转换在 `src/client/settings-fields.ts`（无运行时依赖，所以可被自足 suite 直接测） |
 | 设置页字段词汇 | `src/client/settings-fields.ts` | 七个可编辑字段的集合、`formatSetting` / `parseSetting`、以及四个开关的 schema 默认值。**故意不 import `settings-store.ts`**：store 会拉进 `@deepseek-ai/dsh-client-store`（运行时依赖 `zustand`），自足 suite 解析不到。同 `policy.ts` 的理由 |
 | 两侧共享 | `src/policy.ts` / `src/branch-rule.ts` / `src/validate.ts` | 默认值与取值集合（`policy.ts` 不 import 任何东西，浏览器 bundle 才能直接用）、Host 与浏览器必须逐字一致的分支名规则、路径与目录校验 |
 
@@ -34,7 +35,7 @@ paths:
 - `lib/` —— 构建产物：**已提交进仓库**（`index.mjs` host + `client.js` 浏览器 handoff），
   这样别人可以直接从 git 安装。改完源码**记得 `npm run build` 并把 `lib/` 一起提交**。
 - `cordis.patch.yml` —— 把插件行插入组合的 bundle 层。
-- `tests/` —— 21 个 spec：`service` / `porcelain` / `route` / `plugin` / `session` / `nested` / `archive-cleanup` / `checkout-notice` / `client` / `file-guard` / `settings-fields` / `git` / `worktree-layout` 属于自足子集，
+- `tests/` —— `service` / `porcelain` / `route` / `plugin` / `session` / `nested` / `archive-cleanup` / `checkout-notice` / `client` / `file-guard` / `file-guard-compare` / `compare` / `diff-columns` / `settings-fields` / `git` / `worktree-layout` 属于自足子集，
   `seat` / `registration` / `navigation` / `settings` / `settings-autosave` / `settings-toast` / `backup-panel` 是浏览器半边 spec，按 `vitest.harness.config.ts` 跑。两个 runner 见 `.claude/rules/build-test-release.md` 的「测试」。
 
 ## 组合接线（cordis.patch.yml）

@@ -75,14 +75,34 @@
   border-bottom: 0;
 }
 
-/* The text column keeps the control clear of a long path and lets the path wrap
-   instead of truncating: the tail of a path is what identifies the file. */
-.rowText {
+/* The path is the control that opens the comparison: the whole text column is
+   one button, so the target is the row's full height rather than the name's
+   own box, and a long path wraps inside it. */
+.open {
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
   flex-direction: column;
   gap: 4px;
+  align-items: flex-start;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.open:hover .name {
+  text-decoration: underline;
+}
+
+.open:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 2px;
+  border-radius: var(--dsw-radius-xs);
 }
 
 .name {

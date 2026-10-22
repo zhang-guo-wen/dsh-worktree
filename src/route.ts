@@ -16,10 +16,11 @@
  * `checkout` answers the one question the browser half cannot: what the archive
  * cleanup did to a path whose Workspace row is gone (see `archive-cleanup.ts`).
  *
- * `backups` and `restore` are the file guard's read and undo, and they resolve
- * the session's working directory here rather than taking it from the request:
- * a copy lives below a directory named after the session, but what it restores
- * to is the session's own `cwd`, and only the Host's session store knows that.
+ * `backups`, `restore`, and `compare` are the file guard's read, undo, and
+ * line-by-line comparison, and they resolve the session's working directory
+ * here rather than taking it from the request: a copy lives below a directory
+ * named after the session, but what it restores to or compares against is the
+ * session's own `cwd`, and only the Host's session store knows that.
  * @module @guowenzhang/dsh-worktree/route
  */
 
@@ -231,6 +232,16 @@ export function registerRoute(ctx: Context, service: WorktreeService, guard: Fil
             const sessionId = requireString(body.sessionId, 'sessionId')
             const relative = requireString(body.relative, 'relative')
             writeJson(res, 200, await guard.restore(sessionId, sessionWorkspace(scope, sessionId), relative))
+            return
+          }
+          if (method === 'compare') {
+            // The detail view reads the copy and the file behind it; the target
+            // is resolved here for the same reason a restore's is, so the
+            // browser cannot name a path the Host would read.
+            stage = 'compare'
+            const sessionId = requireString(body.sessionId, 'sessionId')
+            const relative = requireString(body.relative, 'relative')
+            writeJson(res, 200, await guard.compare(sessionId, sessionWorkspace(scope, sessionId), relative))
             return
           }
           throw new RouteError(404, `unknown worktree API method ${JSON.stringify(method)}`)

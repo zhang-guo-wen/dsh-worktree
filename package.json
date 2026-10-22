@@ -76,6 +76,9 @@
     "build": "tsdown -c tsdown.config.ts && node build-client.mjs",
     "typecheck": "node typecheck-harness.mjs"
   },
+  "dependencies": {
+    "diff": "^9.0.0"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
     "@deepseek-ai/dsh-agent": ">=0.1.7-0",
