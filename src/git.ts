@@ -59,6 +59,62 @@ export async function runGit(cwd: string, args: readonly string[]): Promise<stri
   })
 }
 
+/** One completed git invocation, with its exit status rather than a thrown failure. */
+export interface GitExitResult {
+  /** The command's stdout, exactly as Git wrote it. */
+  readonly stdout: string
+  /** The command's stderr, exactly as Git wrote it. */
+  readonly stderr: string
+  /** Process exit status; 0 on success. */
+  readonly code: number
+}
+
+/**
+ * Run one git command and report its exit status instead of throwing on a
+ * nonzero exit.
+ *
+ * Callers use this when a nonzero exit is an answer rather than a failure —
+ * `git config --get` exits 1 for an unset key, and an unset key is the normal
+ * first run. Only a spawn-level failure (Git missing) still rejects, because no
+ * exit status exists to report. The same no-shell rule as {@link runGit}
+ * applies.
+ * @param cwd - directory to run in.
+ * @param args - git arguments, excluding the leading `git`.
+ * @param environment - extra environment entries layered over the process environment; tests set a
+ * scratch global-config file through it so no case touches the operator's own configuration.
+ * @returns stdout, stderr, and the exit status.
+ * @throws {GitCommandError} when Git cannot be spawned at all.
+ */
+export async function runGitWithExit(
+  cwd: string,
+  args: readonly string[],
+  environment?: Readonly<Record<string, string | undefined>>,
+): Promise<GitExitResult> {
+  return await new Promise<GitExitResult>((resolvePromise, rejectPromise) => {
+    execFile('git', [...args], {
+      cwd,
+      windowsHide: true,
+      maxBuffer: 16 * 1024 * 1024,
+      ...environment === undefined ? {} : { env: { ...process.env, ...environment } },
+    }, (error, stdout, stderr) => {
+      if (error === null) {
+        resolvePromise({ stdout, stderr, code: 0 })
+        return
+      }
+      const failure = error as NodeJS.ErrnoException & { code?: number | string }
+      if (failure.code === 'ENOENT' && existsSync(cwd)) {
+        rejectPromise(new GitCommandError(args, cwd, stderr.trim() || error.message, 'git_not_found'))
+        return
+      }
+      if (typeof failure.code === 'number') {
+        resolvePromise({ stdout, stderr, code: failure.code })
+        return
+      }
+      rejectPromise(new GitCommandError(args, cwd, stderr.trim() || error.message))
+    })
+  })
+}
+
 /**
  * Whether a directory is inside a Git working tree.
  * @param cwd - absolute directory to test.

@@ -171,7 +171,12 @@ async function mount(options: {
     },
     slots: {
       inject: (_name: string, callback: () => unknown) => { callback(); return () => {} },
-      register: (entry: { inject: () => WorktreeChipInjected }) => { face = entry.inject(); return () => {} },
+      // Only a seat this case drives carries an inject face; the Git-accounts
+      // page registers with one too, but its face is not what this case reads.
+      register: (entry: { inject?: () => WorktreeChipInjected }) => {
+        if (typeof entry.inject === 'function') face = entry.inject()
+        return () => {}
+      },
     },
     // The file-backup page registers a tab type with the right Sidebar; this
     // case drives the chip, so the registry only has to exist.

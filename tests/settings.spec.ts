@@ -118,7 +118,10 @@ describe('worktree settings page', () => {
 
   it('exposes no manual save, reset or discard actions', async () => {
     const mounted = await mount()
-    expect(Object.keys(page(mounted).inject?.() ?? {}).sort()).toEqual(['edit', 'hooks'])
+    // The policy face and the Git-account connections ride one registration:
+    // both are edits, and neither adds a save/reset/discard verb.
+    expect(Object.keys(page(mounted).inject?.() ?? {}).sort())
+      .toEqual(['edit', 'gitAccounts', 'hooks', 'openAccountsPage'])
   })
 
   it('registers no page while the Host does not serve the entry', async () => {

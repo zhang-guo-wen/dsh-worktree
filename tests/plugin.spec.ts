@@ -98,9 +98,12 @@ describe('dsh-worktree plugin entry', () => {
     expect(tools).toEqual([])
   })
 
-  it('mounts the browser route by default and omits it when disabled', async () => {
-    expect((await mount()).routes).toEqual(['/worktree/api'])
-    expect((await mount({ startSessionRoute: false })).routes).toEqual([])
+  it('mounts the browser routes by default and omits the worktree route when disabled', async () => {
+    // The Git-accounts route shares the plugin entry but not
+    // `startSessionRoute`: it needs only the webserver and the deployment's
+    // credential provider, so disabling the worktree route leaves it mounted.
+    expect((await mount()).routes).toEqual(['/worktree/api', '/worktree/git/api'])
+    expect((await mount({ startSessionRoute: false })).routes).toEqual(['/worktree/git/api'])
   })
 
   it('removes every registration when its fiber unloads', async () => {
@@ -112,7 +115,7 @@ describe('dsh-worktree plugin entry', () => {
       agents: {},
     })
     const fiber = await ctx.plugin(plugin, {}).await()
-    expect(routes).toHaveLength(1)
+    expect(routes).toHaveLength(2)
     await fiber.dispose()
     expect(ctx.get('worktree')).toBeUndefined()
   })
@@ -124,14 +127,15 @@ describe('dsh-worktree plugin entry', () => {
     expect(ctx.get('worktree')).toBeDefined()
   })
 
-  it('mounts no route when a service the route reads is missing', async () => {
+  it('mounts only the Git-accounts route when the worktree route\'s services are missing', async () => {
     const routes: string[] = []
     const ctx = new Context()
     await provideSibling(ctx, { webServer: webServer(routes) })
-    // workspaceRegistry and agents are absent: the route reads both, so it must
-    // wait rather than mount and fail on the first request that needs them.
+    // workspaceRegistry and agents are absent: the worktree route reads both, so
+    // it must wait rather than mount and fail on the first request that needs
+    // them. The Git-accounts route needs neither, so it mounts alone.
     await ctx.plugin(plugin, {}).await()
-    expect(routes).toEqual([])
+    expect(routes).toEqual(['/worktree/git/api'])
   })
 
   it('refuses an agent directory that could escape the workspace at load', async () => {

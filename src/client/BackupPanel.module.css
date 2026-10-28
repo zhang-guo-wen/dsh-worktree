@@ -115,6 +115,18 @@
   text-decoration-line: line-through;
 }
 
+/* The owning-session chip under a path a delegated child changed: the page is
+   one tree, so a row says which session it came from, and the label ellipsizes
+   because a delegation label can be a whole sentence. */
+.subsession {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
 /* A refused read and a refused restore both carry the failure ink, so the two
    are recognisable as the same class of news wherever they appear. */
 .failed {

@@ -30,7 +30,7 @@ paths:
     removeOnSessionArchive: true    # 归档会话时是否删掉它的 linked checkout（默认开）
 ```
 
-设置页放这七项，分两张卡片（导航名「文件备份」）：上面「Worktree 设置」是 `newSessionWorktree` / `nestedRepositories` / `nestedScanDepth` / `defaultPath`，下面「自动备份」是 `fileGuard` / `denyDestructiveCommands` / `backupSidebar`。`agentsDirectory`、`gitTimeoutMs`、`startSessionRoute`、`removeOnSessionArchive` 是部署形态，留在 profile 的 patch 里。volatile 字段要求 harness 的 `schemastery` 提供 `.volatile()`（**≥ 3.18.4**）——这也是本插件 `devDependencies` 里那个版本下限的来由；更早的 harness 只支持启动时配置。
+设置页放这七项，按三张卡片排列（导航名「文件备份」）：最上面是「Git 账号」连接卡（不放配置字段），中间「Worktree 设置」是 `newSessionWorktree` / `nestedRepositories` / `nestedScanDepth` / `defaultPath`，下面「自动备份」是 `fileGuard` / `denyDestructiveCommands` / `backupSidebar`。`agentsDirectory`、`gitTimeoutMs`、`startSessionRoute`、`removeOnSessionArchive` 是部署形态，留在 profile 的 patch 里。volatile 字段要求 harness 的 `schemastery` 提供 `.volatile()`（**≥ 3.18.4**）——这也是本插件 `devDependencies` 里那个版本下限的来由；更早的 harness 只支持启动时配置。
 
 **四个开关的 schema 默认不是一个值，而设置页渲染的是"缺省即默认"**：`src/client/settings-fields.ts` 的 `SWITCH_DEFAULTS` 逐字段列出 `fileGuard` / `denyDestructiveCommands` / `newSessionWorktree` / `backupSidebar` 的默认，直接取 `policy.ts` 的 `DEFAULT_*`。用一个共享的 `SWITCH_DEFAULT = true` 会把默认关的 `newSessionWorktree` 画成"开"，用户就会去"修"一个本来就对的设置——这比不显示更糟。
 

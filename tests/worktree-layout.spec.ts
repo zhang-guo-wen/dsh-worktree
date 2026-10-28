@@ -28,13 +28,15 @@ describe('worktree settings automatic-save surface', () => {
 })
 
 describe('file backup settings page', () => {
-  it('groups the rows into a worktree card above a backup card', () => {
+  it('puts Git accounts first, then the worktree card above the backup card', () => {
+    const gitAccounts = settings.indexOf('<SettingsGitAccountsCard')
     const worktree = settings.indexOf("title={t('settings.worktree.cardTitle')}")
     const backup = settings.indexOf("title={t('settings.backup.cardTitle')}")
-    expect(worktree).toBeGreaterThanOrEqual(0)
+    expect(gitAccounts).toBeGreaterThanOrEqual(0)
+    expect(worktree).toBeGreaterThan(gitAccounts)
     expect(backup).toBeGreaterThan(worktree)
-    // Every row sits inside one of the two cards, and the rows of each card are
-    // exactly the ones the split names.
+    // Every policy row sits inside one of the two cards, and the rows of each
+    // card are exactly the ones the split names.
     expect(settings.slice(worktree, backup)).toContain("props.edit('nestedRepositories'")
     expect(settings.slice(worktree, backup)).toContain("props.edit('nestedScanDepth'")
     expect(settings.slice(worktree, backup)).toContain("props.edit('defaultPath'")

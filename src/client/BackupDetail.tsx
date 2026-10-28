@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject, type UIEvent } from 'react'
 import { Button, IconChevronLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { BackupComparison, BackupEntry, RestoreResult, RouteResult } from './api.ts'
-import type { WorktreeCopyKey } from './locales.ts'
+import { subsessionLabel, type WorktreeCopyKey } from './locales.ts'
 import { firstChangeRow, toColumns, type ColumnCell, type ComparisonColumns } from './diff-columns.ts'
 import css from './BackupDetail.module.css'
 
@@ -39,9 +39,7 @@ type Copy = (key: WorktreeCopyKey, params?: Record<string, string>) => string
 
 /** Everything the page hands this view. */
 export interface BackupDetailProps {
-  /** The session whose copy is compared. */
-  readonly sessionId: string
-  /** The listed copy this view was opened for. */
+  /** The listed copy this view was opened for; its own session owns the copy. */
   readonly entry: BackupEntry
   /** Bumped by the page to make this view read again (refresh, restore). */
   readonly revision: number
@@ -72,7 +70,7 @@ export interface BackupDetailProps {
  * @param props - see {@link BackupDetailProps}.
  * @returns the page body.
  */
-export function BackupDetail({ sessionId, entry, revision, onBack, onRestored, compare, restore, t }: BackupDetailProps): ReactNode {
+export function BackupDetail({ entry, revision, onBack, onRestored, compare, restore, t }: BackupDetailProps): ReactNode {
   const [state, setState] = useState<LoadState>({ status: 'loading' })
   const [attempt, setAttempt] = useState(0)
   const [outcome, setOutcome] = useState<RestoreState>({ kind: 'idle' })
@@ -84,18 +82,18 @@ export function BackupDetail({ sessionId, entry, revision, onBack, onRestored, c
   useEffect(() => {
     let active = true
     setState({ status: 'loading' })
-    void compare(sessionId, entry.relative).then(result => {
+    void compare(entry.sessionId, entry.relative).then(result => {
       if (!active) return
       setState(result.ok
         ? { status: 'ready', value: result.value }
         : { status: 'failed', message: result.message })
     })
     return () => { active = false }
-  }, [compare, sessionId, entry.relative, revision, attempt])
+  }, [compare, entry.sessionId, entry.relative, revision, attempt])
 
   const onRestore = useCallback(() => {
     setOutcome({ kind: 'restoring' })
-    void restore(sessionId, entry.relative).then(result => {
+    void restore(entry.sessionId, entry.relative).then(result => {
       if (!alive.current) return
       if (result.ok) {
         setOutcome({ kind: 'restored' })
@@ -104,14 +102,18 @@ export function BackupDetail({ sessionId, entry, revision, onBack, onRestored, c
         setOutcome({ kind: 'failed', message: result.message })
       }
     })
-  }, [entry.relative, onRestored, restore, sessionId])
+  }, [entry.sessionId, entry.relative, onRestored, restore])
 
   const restoreLabel = outcome.kind === 'restoring' ? t('sidebar.restoring')
     : outcome.kind === 'restored' ? t('sidebar.restored')
       : t('sidebar.restore')
+  // A child's copy and the page session's copy of the same path are two rows
+  // with two different meanings; the child's controls name it, so the two are
+  // distinguishable in the page's list and in the detail header.
+  const owner = entry.depth > 0 ? subsessionLabel(entry, t) : undefined
 
   return (
-    <div className={css.page} data-backup-detail={entry.relative}>
+    <div className={css.page} data-backup-detail={entry.relative} data-backup-session={entry.sessionId}>
       <div className={css.header}>
         <Button
           variant="ghost"
@@ -122,12 +124,19 @@ export function BackupDetail({ sessionId, entry, revision, onBack, onRestored, c
           onClick={onBack}
         />
         <span className={css.title} title={entry.name}>{entry.name}</span>
+        {owner === undefined ? null : (
+          <span className={css.session} title={t('sidebar.subsessionTitle', { id: entry.sessionId })}>
+            {owner}
+          </span>
+        )}
         <Button
           variant="outline"
           size="sm"
           className={css.restore}
           disabled={outcome.kind === 'restoring' || outcome.kind === 'restored'}
-          aria-label={t('sidebar.restoreOne', { name: entry.name })}
+          aria-label={owner === undefined
+            ? t('sidebar.restoreOne', { name: entry.name })
+            : t('sidebar.restoreOneOwned', { name: entry.name, owner })}
           onClick={onRestore}
         >
           {restoreLabel}

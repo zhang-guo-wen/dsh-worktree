@@ -1,28 +1,31 @@
 /**
- * The file backup settings page, in two cards: the policy every later checkout
- * is created under, and the protection that runs over files inside a session.
+ * The file backup settings page, in three cards: the Git connections this
+ * plugin uses, the policy every later checkout is created under, and the
+ * protection that runs over files inside a session.
  *
  * Each card is a title, an explanation, and its own rows, laid out in the
  * settings column's two-column shape (label and explanation left, control
- * right), so this page reads like every other page beside it. The Worktree card
- * answers what a checkout looks like — whether the child repositories come
- * along, how deep the search for them goes, and where the directory lands. The
- * backup card answers what happens to the files inside it: whether they are
- * copied aside before a change, whether a destructive command is refused, and
- * whether the right sidebar offers the page that lists and restores them.
- * Everything else the entry accepts — the agent subdirectory, the git bound,
- * the route options — is deployment composition, edited in the profile's own
- * patch.
+ * right), so this page reads like every other page beside it. The Git accounts
+ * card sits first: connecting a host is the one thing here that talks to a
+ * service outside this machine, and it is what an operator most often opens the
+ * page for. The Worktree card answers what a checkout looks like — whether the
+ * child repositories come along, how deep the search for them goes, and where
+ * the directory lands. The backup card answers what happens to the files inside
+ * it: whether they are copied aside before a change, whether a destructive
+ * command is refused, and whether the right sidebar offers the page that lists
+ * and restores them. Everything else the entry accepts — the agent
+ * subdirectory, the git bound, the route options — is deployment composition,
+ * edited in the profile's own patch.
  *
  * Every valid edit saves automatically through the shared settings scope.
  * There is no manual-save footer, and leaving the page never discards a write.
  *
  * The two action results — a write the Host refused, and a draft it would
  * reject — are reported in the Host's floating banner instead of at the page's
- * own end, which two filled cards and the settings modal's scroll container put
- * out of sight. What stays on the page is standing state: whether the entry is
- * served, whether this deployment stores settings read-only, the Git line, and
- * each row's hint.
+ * own end, which three filled cards and the settings modal's scroll container
+ * put out of sight. What stays on the page is standing state: whether the entry
+ * is served, whether this deployment stores settings read-only, the Git line,
+ * and each row's hint.
  * @module @guowenzhang/dsh-worktree/client/SettingsSection
  */
 
@@ -31,7 +34,9 @@ import { IconWarningOutlineRegular, Switch, Toast } from '@deepseek-ai/dsh-clien
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { WORKTREE_LAYOUTS } from '../policy.ts'
+import type { GitAccountsInjected } from '../git-accounts/types.ts'
 import { request, type GitCheckResult } from './api.ts'
+import { SettingsGitAccountsCard } from './git-accounts/SettingsGitAccountsCard.tsx'
 import { formLabels, type WorktreeCopyKey } from './locales.ts'
 import type { WorktreeSettingsFace } from './settings-store.ts'
 import css from './SettingsSection.module.css'
@@ -56,7 +61,24 @@ interface SettingsReport {
 export type WorktreeSettingsSectionProps =
   PropsRuntime<'settings.section'>
   & PropsLocale<'worktree'>
-  & InjectFace<WorktreeSettingsFace>
+  & InjectFace<WorktreeSettingsFace & WorktreeSettingsGitFace>
+
+/**
+ * The settings page's second injected face: the Git-account connections and the
+ * way to the panel that browses their projects.
+ *
+ * The settings page is where an operator looks for how this plugin talks to
+ * Git, so the connections sit in their own card here. The panel stays the place
+ * projects are listed; this face hands the page both the same Host data face the
+ * panel uses and a navigation callback, so neither surface owns a second
+ * transport.
+ */
+export interface WorktreeSettingsGitFace {
+  /** The Host data face for accounts, scanning, and removal. */
+  gitAccounts: GitAccountsInjected
+  /** Show the Git accounts panel (the settings page closes itself first). */
+  openAccountsPage: () => void
+}
 
 /**
  * Render one settings row: what it edits on the left, the control on the right.
@@ -196,8 +218,8 @@ export function WorktreeSettingsSection(props: WorktreeSettingsSectionProps) {
   const guardsFiles = state.fileGuard.text !== 'false'
 
   // The Git state belongs to the card that creates checkouts, so it sits at
-  // that card's head rather than above both: what it reports answers the first
-  // card's subject, not the page's.
+  // that card's head rather than above every card: what it reports answers the
+  // Worktree card's subject, not the page's.
   const gitLine = gitStatus.kind === 'checking' ? t('settings.gitChecking')
     : gitStatus.kind === 'available' ? `${t('settings.gitAvailable')} · ${gitStatus.detail}`
       : gitStatus.kind === 'missing' ? t('settings.gitMissing')
@@ -219,6 +241,23 @@ export function WorktreeSettingsSection(props: WorktreeSettingsSectionProps) {
           reports it fades, so without this line the control would keep showing a
           value that never reached the Host and nothing would say it did not. */}
       {state.failed ? <p className={`${css.notice} ${css.saveFailed}`} role="status">{labels.saveFailed}</p> : null}
+      {/* The connections this plugin uses for Git, at the page's head: this is
+          the one card that talks to a service outside this machine, so it is
+          what an operator most often opens the settings page for. The projects
+          themselves stay on the Git accounts panel; this card hands the reader
+          over. The two policy cards below it configure checkouts and the
+          protection that runs inside them. */}
+      <SettingsGitAccountsCard
+        gitAccounts={props.gitAccounts}
+        onOpenAccountsPage={() => {
+          // Settings is a dialog over the main column: selecting the panel
+          // behind it without closing would leave the page hidden under the
+          // open settings shell.
+          props.close()
+          props.openAccountsPage()
+        }}
+        t={t}
+      />
       <Card id="worktree" title={t('settings.worktree.cardTitle')}>
         <p className={`${css.gitStatus} ${gitStatus.kind === 'missing' || gitStatus.kind === 'failed' ? css.gitError : ''}`} role="status">
           {gitLine}

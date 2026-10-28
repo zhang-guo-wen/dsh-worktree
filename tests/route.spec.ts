@@ -82,6 +82,25 @@ interface Harness {
   failAttach: { value: boolean }
 }
 
+/** One catalog row the `subagents` double reports for a root. */
+type CatalogRow =
+  | { readonly kind: 'child'; readonly id: string; readonly depth: number; readonly label?: string }
+  | { readonly kind: 'diagnostic'; readonly id: string; readonly depth: number }
+
+/** The session stores and delegation catalog beyond the harness's own session. */
+interface Forest {
+  /** Live sessions, by id and working directory. */
+  readonly live?: Readonly<Record<string, string>>
+  /** Durably stored sessions, by id and working directory. */
+  readonly stored?: Readonly<Record<string, string>>
+  /** Delegated descendants, by the root session they were delegated from. */
+  readonly descendants?: Readonly<Record<string, readonly CatalogRow[]>>
+  /** Omit the durable store, as a deployment without session persistence does. */
+  readonly withoutPersistence?: boolean
+  /** Omit the subagent catalog, as a deployment without delegation does. */
+  readonly withoutSubagents?: boolean
+}
+
 /**
  * Provide services from a sibling plugin fiber, as the loader does.
  *
@@ -107,9 +126,14 @@ async function provideSibling(ctx: Context, services: Record<string, unknown>): 
  * activation order that matters: plugin activation is unordered, so a route
  * that reads the service once with `ctx.get` would be dropped silently. The
  * route must wait for the service instead.
+ * @param initialWorkspace - the one Workspace row the registry answers for.
+ * @param forest - the live and durable sessions and the delegation catalog.
  * @returns the server URL and the recorded registry calls.
  */
-async function mount(initialWorkspace?: { id: string; path: string }): Promise<Harness> {
+async function mount(
+  initialWorkspace?: { id: string; path: string },
+  forest: Forest = {},
+): Promise<Harness> {
   const createdWorkspaces: string[] = []
   const createdSessions: { cwd: string | undefined }[] = []
   const attachedSessions: string[] = []
@@ -124,6 +148,8 @@ async function mount(initialWorkspace?: { id: string; path: string }): Promise<H
   const guardRoot = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-worktree-route-guard-')))
   created.push(sessionWorkspace, guardRoot)
   const guard = new FileGuard({ directory: guardRoot, denyDestructiveCommands: true })
+  const live = new Map<string, string>(Object.entries({ ...forest.live, [sessionId]: sessionWorkspace }))
+  const stored = new Map<string, string>(Object.entries(forest.stored ?? {}))
   const ctx = new Context()
   await provideSibling(ctx, {
     workspaceRegistry: {
@@ -149,7 +175,19 @@ async function mount(initialWorkspace?: { id: string; path: string }): Promise<H
       },
     },
     sessions: {
-      get: (id: string) => id === sessionId ? { header: { cwd: sessionWorkspace } } : undefined,
+      get: (id: string) => live.get(id) === undefined ? undefined : { header: { cwd: live.get(id) } },
+    },
+    ...forest.withoutPersistence === true ? {} : {
+      sessionPersistence: {
+        stat: async (id: string) => stored.get(id) === undefined
+          ? undefined
+          : { header: { cwd: stored.get(id) } },
+      },
+    },
+    ...forest.withoutSubagents === true ? {} : {
+      subagents: {
+        listDescendants: async (root: string) => forest.descendants?.[root] ?? [],
+      },
     },
   })
 
@@ -431,7 +469,32 @@ describe('/worktree/api', () => {
 
 describe('/worktree/api backup methods', () => {
   /**
-   * Protect one file as the guard's own tool hook would, then change it.
+   * Protect one file as a named session's guard would, then change it.
+   * @param harness - the mounted route.
+   * @param owner - the session taking the copy and its working directory.
+   * @param relative - the file's path below the owner's working directory.
+   * @param before - content to keep as the copy.
+   * @param after - content to leave in the file; omitted deletes it.
+   * @returns the file's absolute path.
+   */
+  async function protectAs(
+    harness: Harness,
+    owner: { sessionId: string; cwd: string },
+    relative: string,
+    before: string,
+    after: string | undefined,
+  ): Promise<string> {
+    const file = join(owner.cwd, relative)
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, before)
+    await harness.guard.protect({ session: { id: owner.sessionId, header: { cwd: owner.cwd } } }, file)
+    if (after === undefined) rmSync(file, { force: true })
+    else writeFileSync(file, after)
+    return file
+  }
+
+  /**
+   * Protect one file as the harness's own session would, then change it.
    * @param harness - the mounted route.
    * @param relative - the file's path below the session's working directory.
    * @param before - content to keep as the copy.
@@ -439,13 +502,7 @@ describe('/worktree/api backup methods', () => {
    * @returns the file's absolute path.
    */
   async function protect(harness: Harness, relative: string, before: string, after: string | undefined): Promise<string> {
-    const file = join(harness.sessionWorkspace, relative)
-    mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(file, before)
-    await harness.guard.protect({ session: { id: harness.sessionId, header: { cwd: harness.sessionWorkspace } } }, file)
-    if (after === undefined) rmSync(file, { force: true })
-    else writeFileSync(file, after)
-    return file
+    return protectAs(harness, { sessionId: harness.sessionId, cwd: harness.sessionWorkspace }, relative, before, after)
   }
 
   it('lists what the session changed or deleted, and restores one file', async () => {
@@ -456,8 +513,14 @@ describe('/worktree/api backup methods', () => {
     const listed = await call(harness, 'backups', { sessionId: harness.sessionId })
     expect(listed.status).toBe(200)
     expect(listed.body.entries).toEqual([
-      { relative: 'docs/gone.md', path: deleted, name: 'docs/gone.md', backup: expect.any(String), state: 'deleted' },
-      { relative: 'src/a.ts', path: changed, name: 'src/a.ts', backup: expect.any(String), state: 'modified' },
+      {
+        relative: 'docs/gone.md', path: deleted, name: 'docs/gone.md', backup: expect.any(String), state: 'deleted',
+        sessionId: harness.sessionId, depth: 0,
+      },
+      {
+        relative: 'src/a.ts', path: changed, name: 'src/a.ts', backup: expect.any(String), state: 'modified',
+        sessionId: harness.sessionId, depth: 0,
+      },
     ])
 
     const restored = await call(harness, 'restore', { sessionId: harness.sessionId, relative: 'src/a.ts' })
@@ -470,15 +533,98 @@ describe('/worktree/api backup methods', () => {
     expect((after.body.entries as { relative: string }[]).map(entry => entry.relative)).toEqual(['docs/gone.md'])
   })
 
-  it('answers 404 for a session this host does not know and for a copy it never took', async () => {
+  it('lists a stopped session\'s copies by resolving its durable header, and restores and compares them', async () => {
+    // A teammate that settled has no live session in this process; the page can
+    // still be opened for it, and its directory comes from the stored header.
+    const cold = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-worktree-cold-')))
+    created.push(cold)
+    const harness = await mount(undefined, { stored: { 'session-cold': cold } })
+    const changed = await protectAs(harness, { sessionId: 'session-cold', cwd: cold }, 'src/cold.ts', 'before', 'after')
+
+    const listed = await call(harness, 'backups', { sessionId: 'session-cold' })
+    expect(listed.status).toBe(200)
+    expect(listed.body.entries).toEqual([
+      {
+        relative: 'src/cold.ts', path: changed, name: 'src/cold.ts', backup: expect.any(String), state: 'modified',
+        sessionId: 'session-cold', depth: 0,
+      },
+    ])
+
+    const compared = await call(harness, 'compare', { sessionId: 'session-cold', relative: 'src/cold.ts' })
+    expect(compared.status).toBe(200)
+    expect(compared.body).toMatchObject({ relative: 'src/cold.ts', path: changed, kind: 'text', state: 'modified' })
+
+    expect((await call(harness, 'restore', { sessionId: 'session-cold', relative: 'src/cold.ts' })).status).toBe(200)
+    expect(readFileSync(changed, 'utf8')).toBe('before')
+  })
+
+  it('adds the copies its delegated children took, naming each child and restoring through it', async () => {
+    const child = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-worktree-child-')))
+    created.push(child)
+    const harness = await mount(undefined, {
+      live: { 'child-1': child },
+      descendants: {
+        'session-live': [{ kind: 'child', id: 'child-1', depth: 1, label: 'Fix the widget' }],
+      },
+    })
+    const own = await protect(harness, 'src/own.ts', 'own before', 'own after')
+    const childFile = await protectAs(harness, { sessionId: 'child-1', cwd: child }, 'src/child.ts', 'child before', 'child after')
+
+    const listed = await call(harness, 'backups', { sessionId: harness.sessionId })
+
+    expect(listed.status).toBe(200)
+    // The session's own copies come first; a child's row follows in catalog
+    // order and carries the session that took it, so a restore can address it.
+    expect(listed.body.entries).toEqual([
+      {
+        relative: 'src/own.ts', path: own, name: 'src/own.ts', backup: expect.any(String), state: 'modified',
+        sessionId: harness.sessionId, depth: 0,
+      },
+      {
+        relative: 'src/child.ts', path: childFile, name: 'src/child.ts', backup: expect.any(String), state: 'modified',
+        sessionId: 'child-1', depth: 1, sessionLabel: 'Fix the widget',
+      },
+    ])
+
+    expect((await call(harness, 'restore', { sessionId: 'child-1', relative: 'src/child.ts' })).status).toBe(200)
+    expect(readFileSync(childFile, 'utf8')).toBe('child before')
+  })
+
+  it('lists the session alone when the deployment mounts no delegation catalog', async () => {
+    const harness = await mount(undefined, { withoutSubagents: true })
+    const changed = await protect(harness, 'src/a.ts', 'before', 'after')
+
+    const listed = await call(harness, 'backups', { sessionId: harness.sessionId })
+
+    expect(listed.status).toBe(200)
+    expect(listed.body.entries).toEqual([
+      { relative: 'src/a.ts', path: changed, name: 'src/a.ts', backup: expect.any(String), state: 'modified',
+        sessionId: harness.sessionId, depth: 0 },
+    ])
+  })
+
+  it('answers an empty list for a session no store records that left no copies, and 404 for a copy it never took', async () => {
     const harness = await mount()
     const unknown = await call(harness, 'backups', { sessionId: 'session-elsewhere' })
-    expect(unknown.status).toBe(404)
-    expect(String((unknown.body.error as { message: string }).message)).toMatch(/session-elsewhere/u)
+    expect(unknown.status).toBe(200)
+    expect(unknown.body.entries).toEqual([])
 
     const missing = await call(harness, 'restore', { sessionId: harness.sessionId, relative: 'nope.txt' })
     expect(missing.status).toBe(404)
     expect((await call(harness, 'restore', { sessionId: harness.sessionId })).status).toBe(400)
+  })
+
+  it('refuses the copies of a session no store records, which it can neither address nor restore', async () => {
+    const gone = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-worktree-gone-')))
+    created.push(gone)
+    const harness = await mount()
+    await protectAs(harness, { sessionId: 'session-gone', cwd: gone }, 'src/gone.ts', 'before', 'after')
+
+    const listed = await call(harness, 'backups', { sessionId: 'session-gone' })
+
+    expect(listed.status).toBe(404)
+    expect(String((listed.body.error as { message: string }).message)).toContain('session-gone')
+    expect(String((listed.body.error as { message: string }).message)).toMatch(/working directory is unknown/u)
   })
 
   it('refuses a restore whose copy path leaves the session directory', async () => {

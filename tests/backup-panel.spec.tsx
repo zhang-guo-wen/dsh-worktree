@@ -22,8 +22,21 @@ import { zh, type WorktreeCopyKey } from '../src/client/locales.ts'
 afterEach(cleanup)
 
 /** One listed copy, as the Host reports it. */
-function entry(name: string, state: 'modified' | 'deleted'): BackupEntry {
-  return { relative: name, path: `/w/${name}`, name, backup: `/guard/${name}`, state }
+function entry(
+  name: string,
+  state: 'modified' | 'deleted',
+  owner: { sessionId?: string; depth?: number; sessionLabel?: string } = {},
+): BackupEntry {
+  return {
+    relative: name,
+    path: `/w/${name}`,
+    name,
+    backup: `/guard/${name}`,
+    state,
+    sessionId: owner.sessionId ?? 'session-1',
+    depth: owner.depth ?? 0,
+    ...owner.sessionLabel === undefined ? {} : { sessionLabel: owner.sessionLabel },
+  }
 }
 
 /** One comparison the Host would serve for `src/a.ts`. */
@@ -55,10 +68,15 @@ function copy(key: WorktreeCopyKey, params: Record<string, string> = {}): string
   return zh[key].replace(/\{(\w+)\}/gu, (_, name: string) => params[name] ?? '')
 }
 
-/** The accessible name of one row's restore control. */
-function restoreName(name: string): string {
-  return copy('sidebar.restoreOne', { name })
+/** The accessible name of one row's restore control, naming its owner when it has one. */
+function restoreName(name: string, owner?: string): string {
+  return owner === undefined
+    ? copy('sidebar.restoreOne', { name })
+    : copy('sidebar.restoreOneOwned', { name, owner })
 }
+
+/** How a row names the delegated session that took its copy. */
+const CHILD_LABEL = copy('sidebar.subsessionNamed', { name: 'Fix the widget' })
 
 /** What one mount exposes to a case. */
 interface Mounted {
@@ -186,6 +204,75 @@ describe('the file-backup page', () => {
 
     expect(mounted.reads).toEqual(['session-1', 'session-1'])
     expect(screen.getByText('src/a.ts')).toBeDefined()
+  })
+
+  it('names the delegated session a row came from, and leaves the page\'s own rows unmarked', async () => {
+    await mount({
+      list: async () => ({
+        ok: true,
+        value: {
+          entries: [
+            entry('src/a.ts', 'modified'),
+            entry('src/b.ts', 'modified', { sessionId: 'child-1', depth: 1, sessionLabel: 'Fix the widget' }),
+          ],
+        },
+      }),
+    })
+
+    const rows = screen.getAllByRole('listitem')
+    expect(rows.map(row => row.getAttribute('data-backup-session'))).toEqual(['session-1', 'child-1'])
+    expect(screen.getByText(copy('sidebar.subsessionNamed', { name: 'Fix the widget' }))).toBeDefined()
+    // The page's own row is the session being viewed; only the child needs naming.
+    expect(screen.queryAllByText(copy('sidebar.subsession'))).toHaveLength(0)
+  })
+
+  it('falls back to a plain sub-session mark when the delegation carried no label', async () => {
+    await mount({
+      list: async () => ({
+        ok: true,
+        value: { entries: [entry('src/b.ts', 'modified', { sessionId: 'child-1', depth: 1 })] },
+      }),
+    })
+
+    expect(screen.getByText(copy('sidebar.subsession'))).toBeDefined()
+  })
+
+  it('restores a delegated session\'s file through the session that took the copy', async () => {
+    const mounted = await mount({
+      list: async () => ({
+        ok: true,
+        value: { entries: [entry('src/b.ts', 'modified', { sessionId: 'child-1', depth: 1, sessionLabel: 'Fix the widget' })] },
+      }),
+    })
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: restoreName('src/b.ts', CHILD_LABEL) })) })
+
+    expect(mounted.restores).toEqual([['child-1', 'src/b.ts']])
+  })
+
+  it('opens a delegated file\'s comparison against its own session', async () => {
+    const mounted = await mount({
+      list: async () => ({
+        ok: true,
+        value: { entries: [entry('src/b.ts', 'modified', { sessionId: 'child-1', depth: 1, sessionLabel: 'Fix the widget' })] },
+      }),
+      compare: async () => ({
+        ok: true,
+        value: { ...comparison(), relative: 'src/b.ts', path: '/w/src/b.ts', name: 'src/b.ts' },
+      }),
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: copy('sidebar.openDiffOwned', { name: 'src/b.ts', owner: CHILD_LABEL }) }))
+    })
+
+    expect(mounted.compares).toEqual([['child-1', 'src/b.ts']])
+    // The detail view says whose copy it is showing, so a child's file is not
+    // presented as the page session's own.
+    expect(screen.getByText(CHILD_LABEL)).toBeDefined()
+    // A restore from the detail view also goes through the child's session.
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: restoreName('src/b.ts', CHILD_LABEL) })) })
+    expect(mounted.restores).toEqual([['child-1', 'src/b.ts']])
   })
 
   it('explains an empty list instead of leaving a blank pane', async () => {

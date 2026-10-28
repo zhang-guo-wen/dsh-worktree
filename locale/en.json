@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "dsh-worktree",
-    "description": "Create an isolated Git worktree, register it as a workspace, and start a session inside it."
+    "description": "Create an isolated Git worktree, register it as a workspace, and start a session inside it; manage Git accounts (GitHub, GitLab, Gitee), the global Git identity, and your projects."
   }
 }

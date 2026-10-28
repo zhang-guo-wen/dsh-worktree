@@ -20,7 +20,9 @@
  * line-by-line comparison, and they resolve the session's working directory
  * here rather than taking it from the request: a copy lives below a directory
  * named after the session, but what it restores to or compares against is the
- * session's own `cwd`, and only the Host's session store knows that.
+ * session's own `cwd`, and only the Host's stores know that. `backups` covers
+ * the session plus the delegated children whose work belongs to it; a restore
+ * and a comparison address one copy by the session that took it.
  * @module @guowenzhang/dsh-worktree/route
  */
 
@@ -29,9 +31,10 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { probeArchiveOutcome } from './archive-cleanup.ts'
-import { NoSuchBackupError, type FileGuard } from './file-guard.ts'
+import { NoSuchBackupError, type BackupEntry, type FileGuard } from './file-guard.ts'
 import { GitCommandError, isGitWorkTree, runGit } from './git.ts'
 import { startSessionIn } from './session.ts'
+import { resolveSessionCwd, resolveSessionTree } from './session-tree.ts'
 import { InvalidInitialSelectionError, type WorktreeService } from './service.ts'
 
 /** Request body of the `start` method. */
@@ -119,28 +122,42 @@ function selectedEntries(value: unknown): string[] | undefined {
 /**
  * The working directory one session runs in.
  *
- * Read from the Host's session store, never from the request: a backup's
- * relative path is only meaningful against the directory the session actually
- * had, and a caller-supplied one could point a restore at another file with the
- * same tail. A session this host does not know has no directory to restore
- * into, and says so instead of guessing.
+ * Read from the Host's stores, never from the request: a backup's relative path
+ * is only meaningful against the directory the session actually had, and a
+ * caller-supplied one could point a restore at another file with the same tail.
+ * The live session store answers first, and the durable store answers for a
+ * session that is not live — a stopped teammate, or a child read back from
+ * history after the app was reopened. A session neither store records has no
+ * directory to restore into, and says so instead of guessing.
  * @param ctx - the scope the route handler runs in.
  * @param sessionId - the session named by the request.
  * @returns the absolute working directory.
- * @throws {RouteError} when the session is not in this host's session store.
+ * @throws {RouteError} when no Host store knows the session's directory.
  */
-function sessionWorkspace(ctx: Context, sessionId: string): string {
-  const sessions = ctx.get('sessions') as SessionsLike | undefined
-  const cwd = sessions?.get(SessionId(sessionId))?.header.cwd
+async function sessionWorkspace(ctx: Context, sessionId: string): Promise<string> {
+  const cwd = await resolveSessionCwd(ctx, sessionId)
   if (cwd === undefined) {
     throw new RouteError(404, `session ${JSON.stringify(sessionId)} is not known to this host, so its working directory is unknown`)
   }
   return cwd
 }
 
-/** The narrow view of the session store this route reads. */
-interface SessionsLike {
-  get(id: SessionId): { readonly header: { readonly cwd?: string } } | undefined
+/**
+ * One copy as the backup list reports it: the guard's entry plus the session
+ * that took it.
+ *
+ * The page lists the session and its delegated children in one tree, so a row
+ * must say which session it belongs to — a restore sends the row's own session
+ * back, and the display names a child instead of presenting its files as the
+ * page's own.
+ */
+interface BackupListEntry extends BackupEntry {
+  /** The session whose copy this entry is. */
+  readonly sessionId: string
+  /** Delegation distance from the page's session: 0 for itself, 1 for a direct child. */
+  readonly depth: number
+  /** Human label the delegation was created with, present for a delegated child. */
+  readonly sessionLabel?: string
 }
 
 /**
@@ -158,9 +175,12 @@ interface SessionsLike {
  * model-facing tools and mounts no route, rather than one whose start fails at
  * the first missing service.
  *
- * The session store is read with `ctx.get` instead: it is only needed by the
- * two backup methods, so a deployment without it keeps every other method
- * working, and a request that needs it says so.
+ * The backup methods read three more services with `ctx.get`: the live session
+ * store, the durable session store that answers for a session this process no
+ * longer holds, and the subagent catalog that names the delegated children. All
+ * three are optional — a deployment without one keeps every method that does not
+ * need it working, and the backup page degrades to what it can still address
+ * (the session alone, or an empty list) instead of failing to mount.
  * @param ctx - the Host plugin context.
  * @param service - the worktree capability.
  * @param guard - the file guard whose copies the backup methods read and restore.
@@ -224,14 +244,38 @@ export function registerRoute(ctx: Context, service: WorktreeService, guard: Fil
           if (method === 'backups') {
             stage = 'backups'
             const sessionId = requireString(body.sessionId, 'sessionId')
-            writeJson(res, 200, { entries: await guard.list(sessionId, sessionWorkspace(scope, sessionId)) })
+            const tree = await resolveSessionTree(scope, sessionId)
+            if (tree.root === undefined) {
+              // A session no store records has no directory to address, but it
+              // may also simply have nothing to show: with no copy at all the
+              // page answers an empty list, and only copies the Host cannot
+              // point at are a refusal.
+              if (!await guard.hasCopies(sessionId)) {
+                writeJson(res, 200, { entries: [] })
+                return
+              }
+              throw new RouteError(404, `session ${JSON.stringify(sessionId)} is not known to this host, so its working `
+                + 'directory is unknown; the copies it still holds can be neither compared nor restored without one')
+            }
+            const entries: BackupListEntry[] = []
+            for (const owner of [tree.root, ...tree.descendants]) {
+              for (const entry of await guard.list(owner.sessionId, owner.cwd)) {
+                entries.push({
+                  ...entry,
+                  sessionId: owner.sessionId,
+                  depth: owner.depth,
+                  ...owner.label === undefined ? {} : { sessionLabel: owner.label },
+                })
+              }
+            }
+            writeJson(res, 200, { entries })
             return
           }
           if (method === 'restore') {
             stage = 'restore'
             const sessionId = requireString(body.sessionId, 'sessionId')
             const relative = requireString(body.relative, 'relative')
-            writeJson(res, 200, await guard.restore(sessionId, sessionWorkspace(scope, sessionId), relative))
+            writeJson(res, 200, await guard.restore(sessionId, await sessionWorkspace(scope, sessionId), relative))
             return
           }
           if (method === 'compare') {
@@ -241,7 +285,7 @@ export function registerRoute(ctx: Context, service: WorktreeService, guard: Fil
             stage = 'compare'
             const sessionId = requireString(body.sessionId, 'sessionId')
             const relative = requireString(body.relative, 'relative')
-            writeJson(res, 200, await guard.compare(sessionId, sessionWorkspace(scope, sessionId), relative))
+            writeJson(res, 200, await guard.compare(sessionId, await sessionWorkspace(scope, sessionId), relative))
             return
           }
           throw new RouteError(404, `unknown worktree API method ${JSON.stringify(method)}`)

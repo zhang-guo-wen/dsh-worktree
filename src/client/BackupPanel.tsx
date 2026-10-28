@@ -9,6 +9,11 @@
  * path that identifies it and nothing nests. That also keeps a restore's meaning
  * obvious: one row, one file, one button.
  *
+ * The page covers the session and the delegated children whose work belongs to
+ * it, because a teammate's edits are the session's changes from the reader's
+ * point of view. A row a child took says so and names it, and its restore sends
+ * the child's own session back; the page's own rows carry no such mark.
+ *
  * Opening a row replaces the list with that file's comparison and a way back:
  * two columns need width, and the pane the list lives in has more of it to give
  * a single comparison than a row can spare.
@@ -27,12 +32,25 @@ import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-cli
 // Type-only: pulls the right Sidebar's tab seat and its `useTabInfo` hook.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type { BackupComparison, BackupEntry, BackupListResult, RestoreResult, RouteResult } from './api.ts'
-import type { WorktreeCopyKey } from './locales.ts'
+import { subsessionLabel, type WorktreeCopyKey } from './locales.ts'
 import { BackupDetail } from './BackupDetail.tsx'
 import css from './BackupPanel.module.css'
 
 /** Rows drawn while the first read is in flight. */
 const SKELETON_ROWS = 3
+
+/**
+ * One row's identity: the copy plus the session it belongs to.
+ *
+ * A page that lists a session and its delegated children can report the same
+ * relative path twice — the parent's copy and a child's copy are different
+ * states of the same file — so the path alone cannot key a row's own outcome.
+ * @param entry - one listed copy.
+ * @returns the session-qualified key.
+ */
+function entryKey(entry: BackupEntry): string {
+  return `${entry.sessionId}:${entry.relative}`
+}
 
 /**
  * The page's data face, closed over the plugin's route client.
@@ -125,13 +143,13 @@ export function BackupPanel({ useTabInfo, sessionId, list, restore, compare, t }
   useEffect(() => tab.actions.bindCommands({ refresh }), [tab.actions, refresh])
 
   const onRestore = (entry: BackupEntry): void => {
-    setRows(current => ({ ...current, [entry.relative]: { kind: 'restoring' } }))
-    void restore(sessionId, entry.relative).then(result => {
+    setRows(current => ({ ...current, [entryKey(entry)]: { kind: 'restoring' } }))
+    void restore(entry.sessionId, entry.relative).then(result => {
       if (!alive.current) return
       const next: RowState = result.ok
         ? { kind: 'restored' }
         : { kind: 'failed', message: result.message }
-      setRows(current => ({ ...current, [entry.relative]: next }))
+      setRows(current => ({ ...current, [entryKey(entry)]: next }))
     })
   }
 
@@ -143,12 +161,11 @@ export function BackupPanel({ useTabInfo, sessionId, list, restore, compare, t }
   if (selected !== undefined) {
     return (
       <BackupDetail
-        sessionId={sessionId}
         entry={selected}
         revision={detailRevision}
         onBack={() => { setSelected(undefined) }}
         onRestored={() => {
-          setRows(current => ({ ...current, [selected.relative]: { kind: 'restored' } }))
+          setRows(current => ({ ...current, [entryKey(selected)]: { kind: 'restored' } }))
           setDetailRevision(value => value + 1)
         }}
         compare={compare}
@@ -187,9 +204,9 @@ export function BackupPanel({ useTabInfo, sessionId, list, restore, compare, t }
         <ul className={css.list} data-backup-state="ready" aria-busy={busy}>
           {state.entries.map(entry => (
             <Row
-              key={entry.relative}
+              key={entryKey(entry)}
               entry={entry}
-              row={rows[entry.relative]}
+              row={rows[entryKey(entry)]}
               onRestore={onRestore}
               onOpen={onOpen}
               t={t}
@@ -210,8 +227,8 @@ export function BackupPanel({ useTabInfo, sessionId, list, restore, compare, t }
 }
 
 /**
- * One file's row: what it is, how it differs, and the controls that open its
- * comparison or put its copy back.
+ * One file's row: what it is, whose copy it is, how it differs, and the
+ * controls that open its comparison or put its copy back.
  * @param props - the entry, the row's own outcome, the row actions, and copy.
  * @returns the row.
  */
@@ -227,12 +244,24 @@ function Row({ entry, row, onRestore, onOpen, t }: {
   const label = row?.kind === 'restoring' ? t('sidebar.restoring')
     : row?.kind === 'restored' ? t('sidebar.restored')
       : t('sidebar.restore')
+  // The same relative path can be listed once for the page's session and once
+  // for a child that changed the same file, so the child's controls name the
+  // session too — an identical pair of accessible names would make them
+  // indistinguishable to a screen reader.
+  const owner = entry.depth > 0 ? subsessionLabel(entry, t) : undefined
   return (
-    <li className={css.row} data-backup-row={entry.relative} data-backup-file={entry.state}>
+    <li
+      className={css.row}
+      data-backup-row={entry.relative}
+      data-backup-session={entry.sessionId}
+      data-backup-file={entry.state}
+    >
       <button
         type="button"
         className={css.open}
-        aria-label={t('sidebar.openDiff', { name: entry.name })}
+        aria-label={owner === undefined
+          ? t('sidebar.openDiff', { name: entry.name })
+          : t('sidebar.openDiffOwned', { name: entry.name, owner })}
         title={t('sidebar.copyAt', { path: entry.backup })}
         onClick={() => { onOpen(entry) }}
       >
@@ -241,6 +270,11 @@ function Row({ entry, row, onRestore, onOpen, t }: {
             ? <s aria-label={`${entry.name} (${t('sidebar.state.deleted')})`}>{entry.name}</s>
             : entry.name}
         </span>
+        {owner === undefined ? null : (
+          <span className={css.subsession} title={t('sidebar.subsessionTitle', { id: entry.sessionId })}>
+            {owner}
+          </span>
+        )}
         {row?.kind === 'failed' ? (
           <span className={css.failed}>{t('sidebar.restoreFailed', { message: row.message })}</span>
         ) : null}
@@ -250,7 +284,9 @@ function Row({ entry, row, onRestore, onOpen, t }: {
         size="sm"
         className={css.action}
         disabled={row?.kind === 'restoring' || row?.kind === 'restored'}
-        aria-label={t('sidebar.restoreOne', { name: entry.name })}
+        aria-label={owner === undefined
+          ? t('sidebar.restoreOne', { name: entry.name })
+          : t('sidebar.restoreOneOwned', { name: entry.name, owner })}
         onClick={() => { onRestore(entry) }}
       >
         {label}

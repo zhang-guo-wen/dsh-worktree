@@ -50,8 +50,12 @@ import type { IWorkspaces } from '@deepseek-ai/dsh-api-workspace-controller/clie
 import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
 // Type-only: pulls the ui-conversation SlotMap merge (the hero controls).
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-// Type-only: pulls the ui-layout SlotMap merge (`shell.overlay`).
+// Type-only: pulls the ui-layout SlotMap merge (`shell.overlay`, `main`) and
+// the panel-id brand the Git-accounts page is keyed by.
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+import type { ILayout, MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
+// Type-only: pulls the left Sidebar's SlotMap merge (`sidebar.panellist`).
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { WorktreeChip } from './WorktreeChip.tsx'
 import type { WorktreeChipInjected } from './WorktreeChip.tsx'
 import { CheckoutNoticeToast, observeCheckouts } from './checkout-notice.tsx'
@@ -63,6 +67,9 @@ import { WorktreeSeatController } from './seat-store.ts'
 import { openWithDraft } from './draft-transfer.ts'
 import { WorktreeSettingsSection } from './SettingsSection.tsx'
 import { WorktreeSettingsController, type WorktreeSettings } from './settings-store.ts'
+import { GitAccountsPage } from './git-accounts/GitAccountsPage.tsx'
+import { GitAccountsIcon } from './git-accounts/GitAccountsIcon.tsx'
+import { createGitAccountsFace } from './git-accounts-api.ts'
 import { SETTINGS_NAMESPACE } from '../policy.ts'
 import { en, NS, zh, type WorktreeCopyKey } from './locales.ts'
 
@@ -99,6 +106,13 @@ const BACKUP_TAB_ID = '@guowenzhang/dsh-worktree/backup'
 /** The tab kind the file-backup page is opened as. */
 const BACKUP_TAB_KIND = 'worktree-backup'
 
+/**
+ * Main-panel key of the Git-accounts page, which is also the `sidebar.panellist`
+ * row id that selects it: the sidebar addresses a panel by the key the `main`
+ * slot was registered under, so the two cannot drift apart.
+ */
+const GIT_ACCOUNTS_PANEL_ID = 'git-accounts' as MainPanelId
+
 /** Required services (cordis fiber inject). */
 export const inject = ['slots', 'locale', 'conversation', 'uiWorkspace', 'configForms']
 
@@ -118,6 +132,20 @@ export function apply(ctx: Context): void {
   const settingsScope: SettingsFormScope<WorktreeSettings> = ctx.configForms.get(SETTINGS_NAMESPACE)
   const settings = new WorktreeSettingsController(settingsScope)
   ctx.effect(() => () => { settings.dispose() }, 'ui-worktree: settings form subscription')
+  // One data face for the Git-account connections, shared by the settings card
+  // and the panel below: both surfaces render the same account list, so a second
+  // transport would only let them disagree.
+  const gitAccountsFace = createGitAccountsFace()
+  /**
+   * Leave the settings dialog for the Git-accounts panel. The panel is selected
+   * through the layout service read at call time: a replaced layout must be the
+   * one this navigation uses, and a deployment without one keeps the settings
+   * card's own list working.
+   */
+  const openAccountsPage = (): void => {
+    const layout = ctx.get('layout') as ILayout | undefined
+    layout?.selectPanel(GIT_ACCOUNTS_PANEL_ID)
+  }
   ctx.effect(() => ctx.configForms.whileServed([SETTINGS_NAMESPACE], () => ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
     id: 'worktree',
@@ -125,8 +153,33 @@ export function apply(ctx: Context): void {
     order: 30,
     label: () => t('settings.nav'),
     locale: NS,
-    inject: () => settings.inject(),
+    // The page's own policy face plus the Git-account connections it now edits.
+    inject: () => ({ ...settings.inject(), gitAccounts: gitAccountsFace, openAccountsPage }),
   }, WorktreeSettingsSection))), 'ui-worktree: settings page')
+
+  // The Git-accounts page is an app-level main panel with a navigation row of
+  // its own, not a session panel: accounts, the Git identity, and project
+  // lists belong to the machine, so they neither read nor follow a Session.
+  // The page is always registered; a deployment whose Host has no credential
+  // provider shows that fact inside the page instead of losing the surface.
+  // Both seats ride one scope so a deployment without the slot registry keeps
+  // every other surface.
+  ctx.inject(['slots'], (scope: Context) => {
+    scope.slots.inject('main', () => scope.slots.register({
+      name: 'main',
+      key: GIT_ACCOUNTS_PANEL_ID,
+      locale: NS,
+      inject: () => gitAccountsFace,
+    }, GitAccountsPage))
+    scope.slots.inject('sidebar.panellist', () => scope.slots.register({
+      name: 'sidebar.panellist',
+      id: GIT_ACCOUNTS_PANEL_ID,
+      // After the plugins and reminder rows the shell ships (0 and 10).
+      order: 20,
+      label: () => t('gitAccounts.nav'),
+      locale: NS,
+    }, GitAccountsIcon))
+  })
 
   // The change-history page, as a right-Sidebar tab type and the body under it.
   //

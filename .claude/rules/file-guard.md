@@ -2,12 +2,16 @@
 paths:
   - "src/file-guard.ts"
   - "src/backup-tool.ts"
+  - "src/session-tree.ts"
+  - "src/route.ts"
   - "tests/file-guard.spec.ts"
   - "tests/backup-tool.spec.ts"
   - "tests/backup-panel.spec.tsx"
+  - "tests/route.spec.ts"
+  - "tests/session-tree.spec.ts"
 ---
 
-> 覆盖什么、何时读：改动前保护的发现机制（为什么不是全树扫描）、删除命令拦截、四条不变量、备份存储布局与失败语义、以及列出与还原（`list` / `restore`）。改 `file-guard.ts` / `backup-tool.ts` / 路由的 `backups` `restore` 或 `denyDestructiveCommands` 时读。
+> 覆盖什么、何时读：改动前保护的发现机制（为什么不是全树扫描）、删除命令拦截、四条不变量、备份存储布局与失败语义、列出与还原（`list` / `restore`，含**会话树与冷会话**解析），以及行级对比（`compare`）。改 `file-guard.ts` / `backup-tool.ts` / `session-tree.ts` / 路由的 `backups` `restore` `compare` 或 `denyDestructiveCommands` 时读。
 >
 > 本节原属「设计约束（为什么这么做）」。
 
@@ -44,17 +48,18 @@ paths:
 浏览器半边的「变更记录」页读的就是这两个方法，Host 路由的 `backups` / `restore` 只是它们的出口。**没有索引，副本树就是列表**：`list` 递归走一遍 `~/.agents/file-guard/<会话哈希>/`，逐条判断目标文件与副本的关系。
 
 - **差异按内容判断，不看时间戳**：副本是在改动发生前写的，与它保住的那份状态没有任何共享的时间戳，用 mtime 比会把每一份副本都报成"已修改"。实现先比大小、再按 64 KB 分块流式比较，遇到第一处不同即停。文件不存在 → `deleted`；存在但不是普通文件 → `modified`；逐字节相同 → **不列出**（没有可还原的东西）。
-- **还原是"一份副本写回一个文件"**：`restore(session, workspace, relative)` 只接受**副本路径**（`list` 返回的 `relative`），不接受任意目标路径——目标由 Host 用会话自己的工作目录现算。`relative` 先做包含性校验（拒绝绝对路径、`..`、以及解析后跳出会话目录的路径），在会话目录里找不到普通文件就抛 `NoSuchBackupError`（路由答 404）。写回前 `mkdir -p` 目标目录，所以被删过的文件连目录一起回来。**副本本身保留**：它仍是这个会话的原始记录，同一行可以再还原一次。
-- **会话工作目录只由 Host 决定**：路由用 `ctx.get('sessions')` 查这个会话的 `header.cwd`，**不读请求体里的目录**——否则浏览器传来的目录能把还原指到另一个同名文件上。查不到该会话就答 404，不猜。
+- **还原是"一份副本写回一个文件"**：`restore(session, workspace, relative)` 只接受**副本路径**（`list` 返回的 `relative`），不接受任意目标路径——目标由 Host 用该副本所属会话的工作目录现算。`relative` 先做包含性校验（拒绝绝对路径、`..`、以及解析后跳出会话目录的路径），在会话目录里找不到普通文件就抛 `NoSuchBackupError`（路由答 404）。写回前 `mkdir -p` 目标目录，所以被删过的文件连目录一起回来。**副本本身保留**：它仍是这个会话的原始记录，同一行可以再还原一次。
+- **会话工作目录只由 Host 决定**：live 会话存储优先；它没有时读 `ctx.get('sessionPersistence').stat(id)` 的 header（已停止的子会话、宿主重开后的历史会话都走这条）。**不读请求体里的目录**——否则浏览器传来的目录能把还原指到另一个同名文件上。两个存储都查不到该会话就答 404，不猜；唯一例外见下一条。
+- **列表覆盖当前会话及其派生子会话**（`src/session-tree.ts`）：根用 `sessions` / `sessionPersistence` 解析 cwd；子会话树用 `ctx.get('subagents').listDescendants` 读**持久化目录**（不唤醒 Agent、不加载会话），因此已停止的 teammate 也在内。**fork 不算子会话**：它继承父会话的 header 血缘但是另一段对话，不在 subagent catalog 里，这正是按目录而不是按 `parentSession` 走树的原因。每个子会话的 cwd 同样按 live → 持久化解析，解析不出来的子会话连同其副本**跳过**（无法对比/还原，列出来只会给出做不到的操作）；缺 `subagents` 服务或目录读取失败都**降级为只列当前会话**（记 warn，不失败）。条目带 `sessionId` / `depth` / `sessionLabel`，子会话行的还原与对比都发**它自己的** `sessionId`；同一相对路径可能在根与子会话各有一份，UI 必须按「会话 + 路径」区分行并在子会话行标出归属。
+- **没有记录的会话**：`backups` 在两个存储都解析不到根会话时，先用 `FileGuard.hasCopies` 看该会话目录里有没有副本——**没有副本就回空列表**（页面显示"还没有变更记录"，而不是报错）；有副本才 404，因为地址未知时既不能对比也不能还原。
 - **工作区外的副本按平台反推绝对路径**：`external/<盘符>/…` 在 Windows 上还原成 `<盘符>:/…` 并经 `resolve` 归一成平台原生写法，POSIX 上一律还原成 `/…`。反推不出来的（Windows 上的 UNC 共享没有盘符）**在列表中直接跳过、还原时拒绝**，绝不去猜一个可能指向别处的路径。
-- **列表里只有当前会话的副本**：目录即生命周期，归档即删除，所以不会列出别的会话或已经归档的会话。
-- **路由只加两个方法**：`backups`（读列表）与 `restore`（写回一份），都要求 `sessionId`，还原还要求 `relative`；失败沿用既有 `[stage]` 前缀上报。
+- **路由只加三个方法**：`backups`（读列表，覆盖会话树）、`restore`（写回一份）、`compare`（行级对比），都要求 `sessionId`，后两者还要求 `relative`；`sessionId` 是**副本所属会话**。失败沿用既有 `[stage]` 前缀上报。
 
 ## 对比（`FileGuard.compare` / 路由 `compare`）
 
 浏览器半边的对比详情视图读的就是这个方法。**双方是磁盘上的副本与当前文件，完全不经过 Git**——装没装 Git 行为一致；也不要给它加"用 Git 校准"的路径（Git 的基线是上次提交，不是本会话首次改动前）。语义固定为「本会话首次改动前 → 现在」：共享工作区里别的会话改的会算进右侧，所以 UI 与文档都必须写"自本会话首次改动以来"，不能写成"本会话改了什么"。
 
-- **定位规则与还原逐字相同**：副本 = `contained(会话目录, relative)`，目标 = `targetOf(会话 cwd, relative)`；`relative` 只认副本路径，**请求体里的目录一律不用**，越界 / 绝对路径 / 找不到副本都抛 `NoSuchBackupError`（路由 404）。对比绝不读任意路径。
+- **定位规则与还原逐字相同**：副本 = `contained(会话目录, relative)`，目标 = `targetOf(会话 cwd, relative)`；会话 cwd 与还原走同一套 live → `sessionPersistence` 解析，`relative` 只认副本路径，**请求体里的目录一律不用**，越界 / 绝对路径 / 找不到副本都抛 `NoSuchBackupError`（路由 404）。对比绝不读任意路径。
 - **四种不可逐行显示的情形**：任一侧超过 **2 MiB** → `oversized`；含 NUL 字节或非法 UTF-8（docx/xlsx、图片、UTF-16、旧代码页）→ `binary`；目标不再是普通文件 → `unreadable`；文件已删除 → `state: deleted`、`afterBytes: 0`，仍按文本对比（右栏为空、左栏整份删除）。这四种都只回字节数，**还原照常可用**。
 - **行模型**（`src/comparison-types.ts`，两侧共享）：`context` 双行、`change` 左删/右增/成对替换、`gap` 折叠一段未改动行。替换块按行配对（多出的行留空），行号两侧各自从 1 数，**不能假设两边行号相同**；CRLF/LF、BOM、末行换行差异都不算变化。
 - **计算在 Host**（`src/compare.ts`）：`diff`（jsdiff，BSD-3-Clause，零传递依赖，在 `dependencies` 里）的 `diffLines`，1 s 超时；超时退化成整块替换并标 `coarse`。行数超过 **1,200** 时折叠长段未改动行（两侧各留 3 行），超过 **2,400** 行截断并标 `truncated`。客户端只负责把行渲染成两列（`src/client/diff-columns.ts`）。

@@ -1,0 +1,813 @@
+/* The Git-accounts page: one centered 960px content column holding three cards
+   (identity, accounts, projects), over the host's page ground.
+
+   Geometry follows the shared first-level page frame: the content box is 960px
+   plus its own clamp(24px, 4vw, 48px) side padding, so a bordered box does not
+   spend the cap on that padding; the 28px top inset belongs to this column and
+   the 48px bottom inset keeps the last card off the window edge.
+
+   Everything that is not geometry is a semantic token: colours come from
+   `--dsw-alias-*`, type from the full `--dsw-font-*` shorthands, corners from
+   the `--dsw-radius-*` ladder. The column declares its own inline-size
+   container, so a narrow main panel (a right sidebar opened beside it) stacks
+   rows without a window-width media query. */
+
+.page {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-s-14);
+}
+
+.content {
+  container: git-accounts-page / inline-size;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(960px + 2 * clamp(24px, 4vw, 48px));
+  margin: 0 auto;
+  padding: 28px clamp(24px, 4vw, 48px) 48px;
+}
+
+/* The page head: the title and its one-sentence purpose on the left, the
+   refresh control at the trailing edge. */
+.heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 24px;
+}
+
+.headingText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font: var(--dsw-font-l-20);
+}
+
+.description {
+  margin: 0;
+  font: var(--dsw-font-xs-13);
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.headingActions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The last read's failure, kept above the cards it did not replace. */
+.errorBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 12px 16px;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-xl);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.errorText {
+  margin: 0;
+  font: var(--dsw-font-xs-13);
+  color: var(--dsw-alias-state-error-primary);
+  overflow-wrap: anywhere;
+}
+
+/* The first read's placeholder: the final cards' material and rhythm, filled
+   with the theme's skeleton tone. */
+.loadingCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-xl);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.skeletonLine {
+  display: block;
+  width: 60%;
+  height: 14px;
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-skeleton);
+}
+
+.skeletonLineShort {
+  width: 35%;
+}
+
+/* One card per subject: the shared independent-card material (R20 surface, a
+   0.5px hairline, the layer-1 fill), with no elevation over it. */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0 0 16px;
+  padding: 20px;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-xl);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.cardHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.cardText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cardTitle {
+  margin: 0;
+  font: var(--dsw-font-s-strong-14);
+}
+
+.cardDescription {
+  margin: 0;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.cardActions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---- Git identity ---- */
+
+/* The Host cannot read Git's global configuration: the explanation sits where
+   the disabled form is, on the platform fill rather than the failure ink. */
+.warning {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-module-platform);
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+}
+
+.field {
+  display: flex;
+  flex: 1 1 240px;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* The page's only text-field shape: the settings rows' single-line control
+   (36px, R12) so the identity form and both dialog fields measure alike. */
+.input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-s-14);
+}
+
+.input:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.formActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+/* An accepted write stays said until the next edit; a refused one takes the
+   failure ink and stays too, because the field it came from is still staged. */
+.feedback {
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-state-success-primary);
+  overflow-wrap: anywhere;
+}
+
+.feedbackFailed {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* ---- Accounts ---- */
+
+/* Each account is its own card inside the accounts card: a raised surface and a
+   hairline separate two authorizations that share a host, instead of one long
+   divided list where the second account reads as a continuation of the first. */
+.accountList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.accountRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-2);
+  transition:
+    background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    border-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.accountRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.accountRowSelected {
+  border-color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.accountMain {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.accountTitleRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.accountLogin {
+  font: var(--dsw-font-s-strong-14);
+  overflow-wrap: anywhere;
+}
+
+.accountTag {
+  flex: none;
+}
+
+.accountHost {
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.accountSub {
+  margin: 0;
+  font: var(--dsw-font-xs-13);
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.accountMeta {
+  margin: 0;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.accountActions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Forgetting a token reads as the destructive action it is, in the failure ink;
+   the confirmation itself is the page's dialog. */
+.dangerAction {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* ---- Empty states ---- */
+
+/* An empty card says why it is empty and what fills it, instead of leaving a
+   blank surface. */
+.empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  padding: 8px;
+}
+
+.emptyText {
+  margin: 0;
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.emptyHint {
+  margin: 0;
+  max-width: 72ch;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+/* ---- Dialogs ---- */
+
+.addDialog {
+  width: min(480px, 100%);
+}
+
+.removeDialog {
+  width: min(440px, 100%);
+}
+
+.addForm {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.addField {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tokenHint {
+  margin: 0;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+/* The SSH key picker: detected key files as small choices under the path field.
+   These are secondary controls on the single-line control height (28px). */
+.keyHint {
+  margin: 0;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.keyOptions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.keyOption {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  cursor: pointer;
+  transition: border-color var(--ds-transition-duration-fast) var(--ds-ease-in-out), color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.keyOption:hover:not(:disabled) {
+  border-color: var(--dsw-alias-border-l3);
+  color: var(--dsw-alias-label-primary);
+}
+
+.keyOption:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 2px;
+}
+
+.keyOption:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .keyOption {
+    transition: none;
+  }
+}
+
+.hintLink {
+  color: var(--dsw-alias-link);
+  text-decoration: none;
+}
+
+.hintLink:hover {
+  text-decoration: underline;
+}
+
+.hintLink:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 2px;
+  border-radius: var(--dsw-radius-xs);
+}
+
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* The connection test sits on the footer's other end, apart from Cancel/Add:
+   it is a read that changes nothing, not one of the two closing actions. */
+.verifyAction {
+  margin-right: auto;
+}
+
+/* A successful test is standing state, not a toast: it stays under the fields
+   the operator just tested until one of them changes. */
+.verifyOk {
+  margin: 0;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-state-success-primary);
+  overflow-wrap: anywhere;
+}
+
+/* A refused write, at the place its control sits. */
+.inlineError {
+  margin: 0;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-state-error-primary);
+  overflow-wrap: anywhere;
+}
+
+.inlineErrorRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+/* A refused removal keeps the dialog open on the destructive ink the row
+   already uses; the outline hover rebinds to the danger wash. */
+.confirmDanger:not(:disabled) {
+  border-color: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.confirmDanger:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-hover-danger);
+}
+
+/* ---- Projects ---- */
+
+.projectAccount {
+  flex: none;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* One chip per account: which account's list the card is showing, in the same
+   pressed-button language the settings page uses for a staged choice. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin: 0;
+  padding: 0 10px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 999px;
+  corner-shape: round;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    border-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.chip:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.chip[aria-pressed='true'] {
+  border-color: var(--dsw-alias-state-business-primary);
+  color: var(--dsw-alias-label-primary);
+}
+
+.chipBrand {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.chipLogin {
+  color: inherit;
+}
+
+.projects {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.searchRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.count {
+  flex: none;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.skeletonList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.skeletonRow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 8px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.skeletonBar {
+  display: block;
+  width: 100%;
+  height: 12px;
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-skeleton);
+}
+
+.skeletonBarShort {
+  width: 55%;
+}
+
+.projectList {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.projectRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 -8px;
+  padding: 12px 8px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md);
+  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.projectList > .projectRow:last-child {
+  border-bottom: 0;
+}
+
+.projectRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.projectMain {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.projectHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The path names the project: its namespace stays secondary and its own name
+   carries the emphasized step the reader scans for. */
+.projectPath {
+  min-width: 0;
+  font: var(--dsw-font-s-14);
+  overflow-wrap: anywhere;
+}
+
+.projectNamespace {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.projectName {
+  font: var(--dsw-font-s-strong-14);
+  color: var(--dsw-alias-label-primary);
+}
+
+.projectDescription {
+  margin: 0;
+  font: var(--dsw-font-xs-13);
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.projectMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.projectActions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.copyButton {
+  flex: none;
+}
+
+.copyFailed {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* Opening a project is a link, so it is drawn like the row's quiet actions
+   without pretending to be one of the page's own buttons. */
+.openLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--dsw-radius-sm);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+  text-decoration: none;
+}
+
+.openLink:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.loadMoreRow {
+  display: flex;
+  justify-content: center;
+}
+
+.noMatch {
+  margin: 0;
+  padding: 12px 8px;
+  font: var(--dsw-font-xs-13);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Keyboard focus is visible on every interactive element this page owns; the
+   primitives' own focus styles add their component-specific cues on top. */
+.page :focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 2px;
+}
+
+/* The cards' own inline-size: a main panel narrowed by an open right sidebar
+   stacks the two-column rows instead of squeezing their labels. The 640px rule
+   is a container width, not a window width. */
+@container git-accounts-page (max-width: 640px) {
+  .heading,
+  .cardHead {
+    flex-wrap: wrap;
+  }
+
+  .cardActions {
+    justify-content: flex-start;
+  }
+
+  .accountRow,
+  .projectRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .accountActions,
+  .projectActions {
+    justify-content: flex-start;
+  }
+
+  .form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  /* The main axis is vertical here, so the field's two-column basis (240px,
+     a width) would become a 240px height. Let the content size the rows. */
+  .field {
+    flex: none;
+  }
+
+  .formActions {
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+
+  .searchRow {
+    flex-wrap: wrap;
+  }
+
+  .count {
+    width: 100%;
+  }
+}
+
+/* Touch devices: rows reach the 44px target, the chips with them, and the text
+   fields take the 16px size a phone needs to avoid focus zoom. */
+@media (pointer: coarse) {
+  .accountRow,
+  .projectRow {
+    min-height: 44px;
+  }
+
+  .chip,
+  .openLink,
+  .copyButton {
+    min-height: 44px;
+  }
+
+  .input {
+    height: 44px;
+    font: var(--dsw-font-base-16);
+  }
+}
+
+/* Every transition this page declares is decoration; the reduced-motion reader
+   gets the same states without the fade. */
+@media (prefers-reduced-motion: reduce) {
+  .accountRow,
+  .projectRow,
+  .chip {
+    transition: none;
+  }
+}

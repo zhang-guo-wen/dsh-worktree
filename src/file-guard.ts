@@ -362,6 +362,21 @@ export class FileGuard {
   }
 
   /**
+   * Whether one session's directory holds any copy at all.
+   *
+   * The route asks this only for a session whose working directory cannot be
+   * resolved: a session with no copy has nothing to list, so the page answers
+   * an empty list instead of an error, while a copy the Host cannot address is
+   * a refusal. Answered from the tree alone, like {@link FileGuard.list}; a
+   * directory that was never created holds none.
+   * @param session - the session whose copies to look for.
+   * @returns true when at least one copy file exists below its directory.
+   */
+  async hasCopies(session: string): Promise<boolean> {
+    return (await copiesUnder(join(this.directory, sessionKeyOf(session)))).length > 0
+  }
+
+  /**
    * Copy one backup back over the file it came from.
    *
    * The copy is the state from before this session's first change, so writing it

@@ -4,7 +4,7 @@
  *
  * Both things this page reports are results — a write the Host refused, and a
  * draft it would reject — and both used to render at the page's own end, below
- * two cards inside the settings dialog's scroll container, where a long page
+ * three cards inside the settings dialog's scroll container, where a long page
  * scrolls them out of sight. The case mounts the real page over the real
  * auto-save controller and reads the Host's floating banner the way a user
  * does, rather than reading the state behind it.
@@ -22,6 +22,7 @@ import {
   WorktreeSettingsController, type WorktreeSettings, type WorktreeSettingsState,
 } from '../src/client/settings-store.ts'
 import { WorktreeSettingsSection, type WorktreeSettingsSectionProps } from '../src/client/SettingsSection.tsx'
+import type { GitAccountsInjected } from '../src/git-accounts/types.ts'
 import { zh, type WorktreeCopyKey } from '../src/client/locales.ts'
 
 afterEach(() => {
@@ -65,12 +66,33 @@ async function mount(writable = true): Promise<{ face: ReturnType<WorktreeSettin
   }
   const face = new WorktreeSettingsController(scope).inject()
   const store = face.hooks.worktreeSettings
+  // The Git-account connections card is part of the page; this case drives the
+  // policy rows, so it answers with an empty, successful read.
+  const gitAccounts: GitAccountsInjected = {
+    snapshot: async () => ({
+      ok: true,
+      value: {
+        accounts: [],
+        identity: { name: '', email: '', available: true },
+        sources: [],
+        platform: 'win32',
+      },
+    }),
+    addAccount: async () => ({ ok: false, message: 'not used by this case' }),
+    removeAccount: async () => ({ ok: false, message: 'not used by this case' }),
+    scan: async () => ({ ok: false, message: 'not used by this case' }),
+    projects: async () => ({ ok: false, message: 'not used by this case' }),
+    saveIdentity: async () => ({ ok: false, message: 'not used by this case' }),
+  }
   // The renderer binds a declared store to a hook; the case binds the same store
   // the same way, so what renders is driven by the controller's own snapshots.
   const props = {
     useWorktreeSettings: (select: (state: WorktreeSettingsState) => WorktreeSettingsState) =>
       useSyncExternalStore(store.subscribe, () => select(store.getSnapshot())),
     edit: face.edit,
+    gitAccounts,
+    openAccountsPage: () => {},
+    close: () => {},
     t: (key: WorktreeCopyKey) => zh[key],
   } as unknown as WorktreeSettingsSectionProps
   // The Git line reads the Host route on mount. A spec has no route, and that

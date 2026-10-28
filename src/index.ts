@@ -39,6 +39,9 @@ import { installArchiveCleanup } from './archive-cleanup.ts'
 import { defineBackupTool } from './backup-tool.ts'
 import { FileGuard, installFileGuard } from './file-guard.ts'
 import { registerRoute } from './route.ts'
+import { GitAccountsService } from './git-accounts/accounts.ts'
+import { registerGitAccountsRoute } from './git-accounts/route.ts'
+import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
 // Pulls the `ctx.worktree` service declaration into this program's type face.
 import type {} from './types.ts'
 // Pulls the settings service declaration and its document event.
@@ -241,4 +244,15 @@ export function apply(ctx: Context, config: Config): void {
   // with it.
   installArchiveCleanup(ctx, service, guard, { removeCheckouts: config.removeOnSessionArchive ?? true })
   if (config.startSessionRoute ?? true) registerRoute(ctx, service, guard)
+
+  // The Git-accounts capability: token login, the machine scan, the Git
+  // identity, and project pages. It shares the plugin entry but not the
+  // worktree route: its only required services are the webserver and the
+  // deployment's credential provider, which is read live so a profile that
+  // installs one later starts working without reloading this plugin.
+  const accounts = new GitAccountsService({
+    credentials: () => ctx.get('credentials') as CredentialProvider | undefined,
+    warn: message => { ctx.logger?.warn?.(message) },
+  })
+  registerGitAccountsRoute(ctx, accounts)
 }

@@ -3,10 +3,10 @@
  *
  * The route carries the operations this plugin's UI needs that no generic
  * Remote exposes: create a checkout, register its project, and start a session
- * in it; list the files the guard copied before changing them, preview one
- * copy against the file it stands for, and put a copy back. Everything else
- * (listing workspaces, opening a session) goes through the composed client
- * services.
+ * in it; list the files the guard copied before changing them (the session's own
+ * and those of the sessions it delegated to), preview one copy against the file
+ * it stands for, and put a copy back. Everything else (listing workspaces,
+ * opening a session) goes through the composed client services.
  * @module @guowenzhang/dsh-worktree/client/api
  */
 
@@ -107,11 +107,23 @@ export interface BackupEntry {
   readonly backup: string
   /** `modified` — the file differs from its copy; `deleted` — the file is gone. */
   readonly state: 'modified' | 'deleted'
+  /**
+   * The session that took this copy: the page's own session for a file it
+   * changed itself, a delegated child for one of its files.
+   */
+  readonly sessionId: string
+  /** Delegation distance from the page's session: 0 for itself, 1 for a direct child. */
+  readonly depth: number
+  /** Human label the delegation was created with, present for a delegated child. */
+  readonly sessionLabel?: string
 }
 
 /** A successful `backups` result. */
 export interface BackupListResult {
-  /** The session's protected files whose content no longer matches its copy. */
+  /**
+   * The session's protected files whose content no longer matches its copy,
+   * plus the copies its delegated children took, each naming its own session.
+   */
   readonly entries: BackupEntry[]
 }
 

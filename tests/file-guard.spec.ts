@@ -284,6 +284,20 @@ describe('listing and restoring what a session protected', () => {
     const { workspace, guard } = await scratch()
     expect(await guard.list('session-1', workspace)).toEqual([])
   })
+
+  it('answers whether a session left any copy, without needing its working directory', async () => {
+    const { workspace, guard } = await scratch()
+    expect(await guard.hasCopies('session-1')).toBe(false)
+
+    const file = join(workspace, 'a.txt')
+    await writeFile(file, 'a')
+    await guard.protect(agent(workspace), file)
+
+    expect(await guard.hasCopies('session-1')).toBe(true)
+    // Another session's directory is not consulted: a copy belongs to the
+    // session that took it.
+    expect(await guard.hasCopies('session-2')).toBe(false)
+  })
 })
 
 describe('the shell gate', () => {
